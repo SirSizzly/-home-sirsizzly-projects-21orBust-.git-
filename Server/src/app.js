@@ -1,19 +1,20 @@
-// app.js
 const express = require("express");
 const app = express();
 
-// core middleware
 app.use(express.json());
 
-// routes
 const runRoutes = require("./routes/runRoutes");
 const roundRoutes = require("./routes/roundRoutes");
+const runProgressionRoutes = require("./routes/runProgressionRoutes");
+const runStateRoutes = require("./routes/runStateRoutes");
+const shopRoutes = require("./routes/shopRoutes");
 
-// mount routes
 app.use("/api/runs", runRoutes);
 app.use("/api", roundRoutes);
+app.use("/api", runProgressionRoutes);
+app.use("/api", runStateRoutes);
+app.use("/api", shopRoutes);
 
-// optional simple health check
 app.get("/health", (req, res) => {
   res.json({ status: "ok" });
 });

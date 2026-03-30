@@ -1,0 +1,598 @@
+
+===== FILE: src/engines/scoringEngine.js =====
+// scoringEngine.js
+// Authoritative scoring pipeline for 21orBust.
+// Implements base points, base modifiers, multiplier assembly,
+// pre-fragile score, and final score output.
+
+const { countFaceCards, countRank, uniqueSuits } = require("./cardEngine");
+
+function computeBasePoints(hand, context) {
+  const total = context.handTotal;
+
+  // Bust baseline
+  if (hand.busted) {
+    // Legendary Joker: House Always Loses
+    if (context.jokers.includes("house_always_loses")) {
+      return Math.floor(total * 10 * 0.5);
+    }
+
+    // Relic: Grave Marker
+    if (context.relics.includes("grave_marker")) {
+      return total * 10;
+    }
+
+    // Rare Joker: Blood Counter
+    if (context.jokers.includes("blood_counter")) {
+      return 50;
+    }
+
+    return 0;
+  }
+
+  let base = total * 10;
+
+  // Joker: Face Value
+  if (context.jokers.includes("face_value")) {
+    base += countFaceCards(hand.cards) * 10;
+  }
+
+  // Joker: Thin Margin
+  if (context.jokers.includes("thin_margin") && hand.cards.length === 2) {
+    base += 30;
+  }
+
+  // Joker: Even Odds
+  if (context.jokers.includes("even_odds") && total % 2 === 0) {
+    base += 20;
+  }
+
+  // Joker: Low Stakes
+  if (context.jokers.includes("low_stakes") && total < 18) {
+    base = Math.floor(base / 2);
+  }
+
+  // Boss: The Cutter
+  if (context.boss === "boss_cutter" && (total === 20 || total === 21)) {
+    base -= 20;
+  }
+
+  // Boss: The Short Stack
+  if (context.boss === "boss_short_stack" && total < 17) {
+    return 0;
+  }
+
+  // Boss: The Void
+  if (context.boss === "boss_void") {
+    base = Math.floor(base / 2);
+  }
+
+  return Math.max(0, base);
+}
+
+function assembleMultiplier(hand, context) {
+  let mult = 1;
+
+  // Permanent run multiplier
+  mult += context.run.permanentMultiplier;
+
+  const total = context.handTotal;
+
+  // Joker: High Card
+  if (context.jokers.includes("high_card") && total >= 19) {
+    mult += 1;
+  }
+
+  // Joker: Odd Luck
+  if (context.jokers.includes("odd_luck") && total % 2 === 1) {
+    mult += 1;
+  }
+
+  // Joker: Double Down (first hand of round)
+  if (context.jokers.includes("double_down") && context.firstHand) {
+    mult += 1;
+  }
+
+  // Joker: Dealer’s Smile (first blackjack)
+  if (
+    context.jokers.includes("dealers_smile") &&
+    hand.blackjack &&
+    context.firstBlackjack
+  ) {
+    mult += 1;
+  }
+
+  // Joker: Late Stay
+  if (
+    context.jokers.includes("late_stay") &&
+    hand.stayed &&
+    (total === 20 || total === 21)
+  ) {
+    mult += 1;
+  }
+
+  // Joker: Suit Stitch
+  if (context.jokers.includes("suit_stitch")) {
+    const suits = uniqueSuits(hand.cards);
+    if (suits.size >= 2) mult += 1;
+  }
+
+  // Joker: Suit Tyrant
+  if (context.jokers.includes("suit_tyrant")) {
+    const suits = uniqueSuits(hand.cards);
+    mult += suits.size === 1 ? 3 : -1;
+  }
+
+  // Joker: Face Parade
+  if (context.jokers.includes("face_parade")) {
+    mult += countFaceCards(hand.cards) * 0.5;
+  }
+
+  // Joker: Lucky Sevens
+  if (context.jokers.includes("lucky_sevens")) {
+    const sevens = countRank(hand.cards, "7");
+    mult += sevens * 2;
+    if (sevens === 3) mult += 5;
+  }
+
+  // Joker: Crown of Kings
+  if (context.jokers.includes("crown_of_kings")) {
+    mult += countRank(hand.cards, "K") * 1.5;
+  }
+
+  // Joker: Suit Alchemy
+  if (context.jokers.includes("suit_alchemy")) {
+    mult += uniqueSuits(hand.cards).size;
+  }
+
+  // Joker: Pressure Cooker
+  if (context.jokers.includes("pressure_cooker")) {
+    mult += context.run.fragileStacks * 0.5;
+  }
+
+  // Enhancement: Face Crown
+  if (context.enhancements.includes("face_crown")) {
+    mult += countFaceCards(hand.cards);
+  }
+
+  // Enhancement: Blackjack Booster
+  if (context.enhancements.includes("blackjack_booster") && hand.blackjack) {
+    mult += 2;
+  }
+
+  // Enhancement: Cursed Edge
+  if (context.enhancements.includes("cursed_edge")) {
+    mult += 3;
+  }
+
+  return mult;
+}
+
+function scoreHand(hand, context) {
+  const base = computeBasePoints(hand, context);
+  const multiplier = assembleMultiplier(hand, context);
+  const preFragile = base * multiplier;
+
+  return {
+    basePoints: base,
+    multiplier,
+    preFragileScore: preFragile,
+  };
+}
+
+module.exports = {
+  scoreHand,
+};
+
+===== FILE: src/engines/handEngine.js =====
+// handEngine.js
+// Authoritative hand lifecycle logic for 21orBust.
+// Handles actions, resolution, auto-blackjack, splits, and boss restrictions.
+
+const {
+  calculateHandTotal,
+  hasVoidBorder,
+  cloneCard,
+} = require("./cardEngine");
+
+// -----------------------------
+// Hand factory
+// -----------------------------
+function createHand() {
+  return {
+    cards: [],
+    resolved: false,
+    busted: false,
+    blackjack: false,
+    stayed: false,
+    hitsTaken: 0,
+    voidBorderUsed: false,
+  };
+}
+
+// -----------------------------
+// Auto-resolve at 21
+// -----------------------------
+function checkAutoBlackjack(hand, context) {
+  const total = calculateHandTotal(hand.cards, context);
+  if (total === 21) {
+    hand.blackjack = true;
+    hand.resolved = true;
+  }
+  return total;
+}
+
+// -----------------------------
+// Hit action
+// -----------------------------
+function hit(hand, drawCard, context) {
+  if (hand.resolved) return;
+
+  // Boss: The Tightening — max 2 hits
+  if (context.boss === "boss_tightening" && hand.hitsTaken >= 2) {
+    return;
+  }
+
+  // Boss: The Leak — hit costs 1 gold
+  if (context.boss === "boss_leak") {
+    context.run.gold = Math.max(0, context.run.gold - 1);
+  }
+
+  const card = drawCard();
+  hand.cards.push(card);
+  hand.hitsTaken += 1;
+
+  const total = calculateHandTotal(hand.cards, context);
+
+  if (total > 21) {
+    // Void Border — ignore first bust
+    if (!hand.voidBorderUsed && hand.cards.some(hasVoidBorder)) {
+      hand.voidBorderUsed = true;
+      return;
+    }
+
+    hand.busted = true;
+    hand.resolved = true;
+    return;
+  }
+
+  if (total === 21) {
+    hand.blackjack = true;
+    hand.resolved = true;
+  }
+}
+
+// -----------------------------
+// Stay action
+// -----------------------------
+function stay(hand) {
+  if (hand.resolved) return;
+  hand.stayed = true;
+  hand.resolved = true;
+}
+
+// -----------------------------
+// Double Down
+// -----------------------------
+function doubleDown(hand, drawCard, context) {
+  if (hand.resolved) return;
+
+  const card = drawCard();
+  hand.cards.push(card);
+
+  const total = calculateHandTotal(hand.cards, context);
+
+  if (total > 21) {
+    if (!hand.voidBorderUsed && hand.cards.some(hasVoidBorder)) {
+      hand.voidBorderUsed = true;
+    } else {
+      hand.busted = true;
+    }
+  } else if (total === 21) {
+    hand.blackjack = true;
+  }
+
+  hand.resolved = true;
+}
+
+// -----------------------------
+// Split action
+// -----------------------------
+function canSplit(hand, context) {
+  if (hand.cards.length !== 2) return false;
+
+  // Boss: The Crackdown — split disabled
+  if (context.boss === "boss_crackdown") return false;
+
+  return true;
+}
+
+function split(hand, context) {
+  if (!canSplit(hand, context)) return null;
+
+  const [c1, c2] = hand.cards;
+
+  const h1 = createHand();
+  const h2 = createHand();
+
+  h1.cards.push(cloneCard(c1));
+  h2.cards.push(cloneCard(c2));
+
+  // Echo Split — duplicate highest card
+  if (context.echoSplit) {
+    const total1 = calculateHandTotal(h1.cards, context);
+    const total2 = calculateHandTotal(h2.cards, context);
+    const highest = total1 >= total2 ? c1 : c2;
+
+    h1.cards.push(cloneCard(highest));
+    h2.cards.push(cloneCard(highest));
+  }
+
+  return [h1, h2];
+}
+
+module.exports = {
+  createHand,
+  checkAutoBlackjack,
+  hit,
+  stay,
+  doubleDown,
+  split,
+};
+
+===== FILE: src/engines/blindEngine.js =====
+// blindEngine.js
+// Authoritative blind lifecycle for 21orBust.
+// Manages hands, accumulated score, early clear, and Final Hand logic.
+
+const { createHand, checkAutoBlackjack } = require("./handEngine");
+const { calculateHandTotal } = require("./cardEngine");
+const { scoreHand } = require("./scoringEngine");
+const {
+  applyFragileOnBust,
+  applyFragileOnScore,
+  applyFragileReduction,
+} = require("./fragileEngine");
+
+function playBlind(context) {
+  // context:
+  // {
+  //   run,
+  //   deck,
+  //   drawCard,
+  //   targetScore,
+  //   maxHands,
+  //   boss,
+  //   dispatcher,
+  //   handlers
+  // }
+
+  let accumulatedScore = 0;
+  let handsPlayed = [];
+  let firstBlackjackResolved = false;
+
+  for (let handIndex = 0; handIndex < context.maxHands; handIndex++) {
+    const hand = createHand();
+    hand.cards.push(context.drawCard());
+    hand.cards.push(context.drawCard());
+
+    const handContext = {
+      aceUpActive: false,
+      scrambleActive: context.boss === "boss_scramble",
+      prng: context.run.prng,
+    };
+
+    const total = checkAutoBlackjack(hand, handContext);
+    if (hand.blackjack && !firstBlackjackResolved) {
+      firstBlackjackResolved = true;
+    }
+
+    // Hand play loop is driven externally (player input)
+    // At this point, the hand is resolved
+
+    const handTotal = calculateHandTotal(hand.cards, handContext);
+
+    const scoringContext = {
+      run: context.run,
+      boss: context.boss,
+      handTotal,
+      firstHand: handIndex === 0,
+      firstBlackjack: firstBlackjackResolved,
+      jokers: context.run.jokers.map((j) => j.key),
+      relics: context.run.relics.map((r) => r.key),
+      enhancements: hand.cards
+        .map((c) => c.enhancement && c.enhancement.key)
+        .filter(Boolean),
+    };
+
+    let { basePoints, multiplier, preFragileScore } = scoreHand(
+      hand,
+      scoringContext,
+    );
+
+    if (hand.busted) {
+      applyFragileOnBust({
+        run: context.run,
+        boss: context.boss,
+        jokers: scoringContext.jokers,
+        relics: scoringContext.relics,
+        enhancements: scoringContext.enhancements,
+      });
+    } else {
+      applyFragileOnScore({
+        run: context.run,
+        boss: context.boss,
+      });
+    }
+
+    const finalScore = applyFragileReduction(
+      preFragileScore,
+      context.run.fragileStacks,
+    );
+
+    handsPlayed.push({
+      hand,
+      finalScore,
+      multiplier,
+    });
+
+    accumulatedScore += finalScore;
+
+    if (accumulatedScore >= context.targetScore) {
+      break;
+    }
+  }
+
+  // Boss / Joker: Final Hand — only highest scoring hand counts
+  if (
+    context.boss === "boss_final_hand" ||
+    context.run.jokers.some((j) => j.key === "final_hand")
+  ) {
+    const highest = Math.max(...handsPlayed.map((h) => h.finalScore));
+    accumulatedScore = highest * 3;
+  }
+
+  return {
+    cleared: accumulatedScore >= context.targetScore,
+    accumulatedScore,
+    handsPlayed,
+  };
+}
+
+module.exports = {
+  playBlind,
+};
+
+===== FILE: src/engines/effectDispatcher.js =====
+// effectDispatcher.js
+// Centralized trigger resolution for 21orBust.
+// Enforces trigger timing, resolution order, and override hierarchy.
+//
+// Resolution order (per spec):
+//   Enhancements → Jokers → Relics (left-to-right)
+// Override hierarchy:
+//   Boss > Joker > Relic > Enhancement > Base
+
+function dispatch(event, payload, context) {
+  // context:
+  // {
+  //   boss,
+  //   jokers: [{ key }],
+  //   relics: [{ key }],
+  //   enhancements: [{ key }],
+  //   handlers: {
+  //     enhancements: { [key]: fn },
+  //     jokers: { [key]: fn },
+  //     relics: { [key]: fn },
+  //     bosses: { [key]: fn }
+  //   }
+  // }
+
+  // Boss overrides always resolve first
+  if (context.boss && context.handlers.bosses[context.boss]) {
+    const blocked = context.handlers.bosses[context.boss](
+      event,
+      payload,
+      context,
+    );
+    if (blocked === true) return;
+  }
+
+  // Enhancements (left → right)
+  for (const enh of context.enhancements) {
+    const handler = context.handlers.enhancements[enh.key];
+    if (handler) handler(event, payload, context);
+  }
+
+  // Jokers (left → right)
+  for (const joker of context.jokers) {
+    const handler = context.handlers.jokers[joker.key];
+    if (handler) handler(event, payload, context);
+  }
+
+  // Relics (left → right)
+  for (const relic of context.relics) {
+    const handler = context.handlers.relics[relic.key];
+    if (handler) handler(event, payload, context);
+  }
+}
+
+module.exports = {
+  dispatch,
+};
+
+===== FILE: src/engines/runEngine.js =====
+// runEngine.js
+// Authoritative run lifecycle for 21orBust.
+// Initializes runs, manages ante progression, and determines run end.
+
+const { setSeed } = require("./prngEngine");
+const { createDeck, shuffle, draw } = require("./deckEngine");
+const { playRound } = require("./roundEngine");
+
+function startRun(seed) {
+  setSeed(seed);
+
+  const deck = shuffle(createDeck());
+
+  return {
+    seed,
+    deck,
+    deckPosition: 0,
+    gold: 5,
+    fragileStacks: 0,
+    permanentMultiplier: 0,
+    jokers: [],
+    relics: [],
+    anteIndex: 1,
+    maxHands: 3,
+    runOver: false,
+    stats: {
+      highestBlind: 0,
+      totalScore: 0,
+    },
+  };
+}
+
+function drawCard(run) {
+  const card = run.deck[run.deckPosition];
+  run.deckPosition += 1;
+  return card;
+}
+
+function playRun(run, context) {
+  while (!run.runOver) {
+    const boss = context.selectBoss(run.anteIndex);
+
+    const roundResult = playRound({
+      run,
+      deck: run.deck,
+      drawCard: () => drawCard(run),
+      anteIndex: run.anteIndex,
+      boss,
+      dispatcher: context.dispatcher,
+      handlers: context.handlers,
+    });
+
+    if (!roundResult.success) {
+      run.runOver = true;
+      run.stats.highestBlind = run.anteIndex;
+      return {
+        success: false,
+        run,
+      };
+    }
+
+    run.anteIndex += 1;
+  }
+
+  return {
+    success: true,
+    run,
+  };
+}
+
+module.exports = {
+  startRun,
+  playRun,
+};

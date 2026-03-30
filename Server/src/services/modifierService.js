@@ -1,163 +1,100 @@
-const knex = require("../data/db/knex");
+// src/services/modifierService.js
+// Central dispatcher for all gameplay modifiers.
+// Owns registration, trigger ordering, and override resolution.
 
-// Load all purchased modifiers for a run, grouped by type
-async function getActiveModifiersForRun(runId) {
-  const rows = await knex("purchases as p")
-    .join("shop_items as si", "p.shop_item_id", "si.id")
-    .join("shops as s", "si.shop_id", "s.id")
-    .where("p.run_id", runId)
-    .select(
-      "si.item_type",
-      "si.item_key",
-      "si.name",
-      "p.purchased_at",
-      "s.round_number",
-    );
+const jokerHandlers = {};
+const relicHandlers = {};
+const enhancementHandlers = {};
+const bossHandlers = {};
 
-  const jokers = [];
-  const relics = [];
-  const cardBuffs = [];
-  const cardEnhancers = [];
-  const cardChangers = [];
-
-  for (const row of rows) {
-    switch (row.item_type) {
-      case "joker":
-        jokers.push(row);
-        break;
-      case "relic":
-        relics.push(row);
-        break;
-      case "card_buff":
-        cardBuffs.push(row);
-        break;
-      case "card_enhancer":
-        cardEnhancers.push(row);
-        break;
-      case "card_changer":
-        cardChangers.push(row);
-        break;
-      default:
-        break;
-    }
-  }
-
-  return {
-    jokers,
-    relics,
-    cardBuffs,
-    cardEnhancers,
-    cardChangers,
-  };
+// ------------------------------------------------------------
+// Registration API
+// ------------------------------------------------------------
+function registerJoker(key, handler) {
+  jokerHandlers[key] = handler;
 }
 
-// Apply joker effects to scoring
-function applyJokerEffects(jokers, context) {
-  let { totalScore, streakBonus, allBust, handResults } = context;
-
-  const nonBustHands = handResults.filter((h) => h.result !== "bust").length;
-
-  for (const joker of jokers) {
-    switch (joker.item_key) {
-      case "double_down_joker":
-        if (nonBustHands > 0) {
-          totalScore *= 2;
-        }
-        break;
-      case "safe_hit_joker":
-        if (handResults.some((h) => h.result === "bust")) {
-          totalScore += 10;
-        }
-        break;
-      case "streak_boost_joker":
-        streakBonus += 10;
-        break;
-      default:
-        break;
-    }
-  }
-
-  return { totalScore, streakBonus, allBust, handResults };
+function registerRelic(key, handler) {
+  relicHandlers[key] = handler;
 }
 
-// Apply relic effects to scoring
-function applyRelicEffects(relics, context) {
-  let { totalScore, streakBonus, allBust, handResults } = context;
-
-  const nonBustHands = handResults.filter((h) => h.result !== "bust").length;
-
-  for (const relic of relics) {
-    switch (relic.item_key) {
-      case "second_chance_relic":
-        if (allBust && handResults.length > 0) {
-          // flip allBust off and give a small pity score
-          allBust = false;
-          totalScore += 10;
-        }
-        break;
-      case "steady_hand_relic":
-        totalScore += 5 * nonBustHands;
-        break;
-      case "ace_shift_relic":
-        // placeholder: small flat bonus for now
-        totalScore += 5;
-        break;
-      default:
-        break;
-    }
-  }
-
-  return { totalScore, streakBonus, allBust, handResults };
+function registerEnhancement(key, handler) {
+  enhancementHandlers[key] = handler;
 }
 
-// Apply card buff/enhancer/changer effects (for now: simple scoring tweaks)
-function applyCardEffectModifiers(
-  cardBuffs,
-  cardEnhancers,
-  cardChangers,
+function registerBoss(key, handler) {
+  bossHandlers[key] = handler;
+}
+
+// ------------------------------------------------------------
+// Trigger execution
+// ------------------------------------------------------------
+function applyModifiers({
+  trigger,
   context,
-) {
-  let { totalScore, streakBonus, allBust, handResults } = context;
+  jokers = [],
+  relics = [],
+  enhancements = [],
+  boss = null,
+}) {
+  const effects = [];
 
-  if (cardBuffs.length > 0) {
-    totalScore += 5 * cardBuffs.length;
+  // 1. Boss always executes first
+  if (boss && bossHandlers[boss]) {
+    const result = bossHandlers[boss](trigger, context);
+    if (result) effects.push(result);
   }
 
-  if (cardEnhancers.length > 0) {
-    streakBonus += 5 * cardEnhancers.length;
+  // 2. Relics
+  for (const key of relics) {
+    const handler = relicHandlers[key];
+    if (!handler) continue;
+    const result = handler(trigger, context);
+    if (result) effects.push(result);
   }
 
-  if (cardChangers.length > 0) {
-    totalScore += 3 * cardChangers.length;
+  // 3. Jokers
+  for (const key of jokers) {
+    const handler = jokerHandlers[key];
+    if (!handler) continue;
+    const result = handler(trigger, context);
+    if (result) effects.push(result);
   }
 
-  return { totalScore, streakBonus, allBust, handResults };
+  // 4. Enhancements (card-level, lowest priority)
+  for (const key of enhancements) {
+    const handler = enhancementHandlers[key];
+    if (!handler) continue;
+    const result = handler(trigger, context);
+    if (result) effects.push(result);
+  }
+
+  return resolveOverrides(effects);
 }
 
-// Main entry: apply all modifiers to base scoring
-async function applyScoringModifiers(runId, baseContext) {
-  const modifiers = await getActiveModifiersForRun(runId);
+// ------------------------------------------------------------
+// Override resolution
+// ------------------------------------------------------------
+function resolveOverrides(effects) {
+  let final = {};
 
-  let context = {
-    totalScore: baseContext.totalScore,
-    streakBonus: baseContext.streakBonus,
-    allBust: baseContext.allBust,
-    handResults: baseContext.handResults,
-  };
+  for (const effect of effects) {
+    for (const [key, value] of Object.entries(effect)) {
+      // Later effects override earlier ones
+      final[key] = value;
+    }
+  }
 
-  context = applyJokerEffects(modifiers.jokers, context);
-  context = applyRelicEffects(modifiers.relics, context);
-  context = applyCardEffectModifiers(
-    modifiers.cardBuffs,
-    modifiers.cardEnhancers,
-    modifiers.cardChangers,
-    context,
-  );
-
-  return context;
+  return final;
 }
 
+// ------------------------------------------------------------
+// Public API
+// ------------------------------------------------------------
 module.exports = {
-  getActiveModifiersForRun,
-  applyScoringModifiers,
+  registerJoker,
+  registerRelic,
+  registerEnhancement,
+  registerBoss,
+  applyModifiers,
 };

@@ -1,4 +1,8 @@
-const knex = require("../data/db/knex");
+// src/services/runService.js
+// Run lifecycle only: create, fetch, complete.
+// No hand/blind/shop resolution lives here.
+
+const knex = require("../db/knex");
 const { generateSeed, generateDeck } = require("../utils/deckGenerator");
 
 async function startRun() {
@@ -6,16 +10,20 @@ async function startRun() {
   const deck = generateDeck(seed);
 
   return await knex.transaction(async (trx) => {
-    // Insert run
     const [run] = await trx("runs")
       .insert({
         seed,
         next_position: 0,
+        gold: 5,
+        fragile_stacks: 0,
+        permanent_multiplier: 0,
+        ante_index: 1,
+        is_complete: false,
         created_at: trx.fn.now(),
+        updated_at: trx.fn.now(),
       })
       .returning("*");
 
-    // Insert deck cards
     const deckRows = deck.map((card, index) => ({
       run_id: run.id,
       position: index,
@@ -28,9 +36,28 @@ async function startRun() {
 
     await trx("deck_cards").insert(deckRows);
 
+    await trx("run_stats").insert({
+      run_id: run.id,
+      highest_ante: 0,
+      total_score: 0,
+      hands_played: 0,
+      blackjacks: 0,
+      busts: 0,
+    });
+
+    // Do NOT create blind/hand here—runstateService will ensure them on demand.
     return {
-      ...run,
-      deck,
+      id: run.id,
+      seed: run.seed,
+      gold: run.gold,
+      fragileStacks: run.fragile_stacks,
+      permanentMultiplier: run.permanent_multiplier,
+      anteIndex: run.ante_index,
+      next_position: run.next_position,
+      is_complete: !!run.is_complete,
+      created_at: run.created_at,
+      updated_at: run.updated_at,
+      completed_at: run.completed_at || null,
     };
   });
 }
@@ -39,49 +66,39 @@ async function getRun(runId) {
   const run = await knex("runs").where({ id: runId }).first();
   if (!run) return null;
 
-  const deck = await knex("deck_cards")
-    .where({ run_id: runId })
-    .orderBy("position", "asc");
-
-  const roundState = await knex("round_states")
-    .where({ run_id: runId })
-    .orderBy("round_number", "desc")
-    .first();
+  const stats = await knex("run_stats").where({ run_id: runId }).first();
 
   return {
-    ...run,
-    deck,
-    roundState: roundState || null,
+    id: run.id,
+    seed: run.seed,
+    gold: run.gold,
+    fragileStacks: run.fragile_stacks,
+    permanentMultiplier: run.permanent_multiplier,
+    anteIndex: run.ante_index,
+    next_position: run.next_position,
+    is_complete: !!run.is_complete,
+    created_at: run.created_at,
+    updated_at: run.updated_at,
+    completed_at: run.completed_at || null,
+    stats: stats || null,
   };
 }
 
-async function advancePosition(runId, amount = 1) {
+async function completeRun(runId) {
   const run = await knex("runs").where({ id: runId }).first();
   if (!run) throw new Error("Run not found");
 
-  const newPos = run.next_position + amount;
+  await knex("runs").where({ id: runId }).update({
+    is_complete: true,
+    completed_at: knex.fn.now(),
+    updated_at: knex.fn.now(),
+  });
 
-  await knex("runs").where({ id: runId }).update({ next_position: newPos });
-
-  return newPos;
-}
-
-async function attachRoundState(runId, roundNumber, state) {
-  const [row] = await knex("round_states")
-    .insert({
-      run_id: runId,
-      round_number: roundNumber,
-      state_json: JSON.stringify(state),
-      created_at: knex.fn.now(),
-    })
-    .returning("*");
-
-  return row;
+  return true;
 }
 
 module.exports = {
   startRun,
   getRun,
-  advancePosition,
-  attachRoundState,
+  completeRun,
 };

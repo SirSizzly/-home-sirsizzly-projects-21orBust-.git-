@@ -1,42 +1,21 @@
+// src/routes/roundRoutes.js
+// Public API for blind lifecycle control.
+
 const express = require("express");
 const router = express.Router();
-const roundService = require("../services/roundService");
 
-// start a new round for a run
-router.post("/runs/:runId/rounds", async (req, res) => {
-  try {
-    const { runId } = req.params;
-    const round = await roundService.startRound(Number(runId));
-    res.json(round);
-  } catch (err) {
-    console.error(err);
-    res.status(400).json({ error: err.message });
-  }
-});
+const roundService = require("../services/roundServices");
 
-// get current round for a run
-router.get("/runs/:runId/rounds/current", async (req, res) => {
+// ------------------------------------------------------------
+// POST /api/runs/:runId/blind/start
+// Body: { blindType: "small" | "big" | "boss" }
+// ------------------------------------------------------------
+router.post("/runs/:runId/blind/start", async (req, res) => {
   try {
-    const { runId } = req.params;
-    const round = await roundService.getCurrentRound(Number(runId));
-    if (!round) return res.status(404).json({ error: "No round found" });
-    res.json(round);
-  } catch (err) {
-    console.error(err);
-    res.status(400).json({ error: err.message });
-  }
-});
+    const runId = Number(req.params.runId);
+    const { blindType } = req.body || {};
 
-// hit
-router.post("/rounds/:roundStateId/hit/:handIndex", async (req, res) => {
-  try {
-    const { roundStateId, handIndex } = req.params;
-    const { runId } = req.body;
-    const result = await roundService.hit(
-      Number(runId),
-      Number(roundStateId),
-      Number(handIndex),
-    );
+    const result = await roundService.startBlind(runId, blindType);
     res.json(result);
   } catch (err) {
     console.error(err);
@@ -44,31 +23,14 @@ router.post("/rounds/:roundStateId/hit/:handIndex", async (req, res) => {
   }
 });
 
-// stay
-router.post("/rounds/:roundStateId/stay/:handIndex", async (req, res) => {
+// ------------------------------------------------------------
+// POST /api/runs/:runId/blind/resolve
+// Called after a hand resolves to check clear/fail/ongoing
+// ------------------------------------------------------------
+router.post("/runs/:runId/blind/resolve", async (req, res) => {
   try {
-    const { roundStateId, handIndex } = req.params;
-    const result = await roundService.stay(
-      Number(roundStateId),
-      Number(handIndex),
-    );
-    res.json(result);
-  } catch (err) {
-    console.error(err);
-    res.status(400).json({ error: err.message });
-  }
-});
-
-// split
-router.post("/rounds/:roundStateId/split/:handIndex", async (req, res) => {
-  try {
-    const { roundStateId, handIndex } = req.params;
-    const { runId } = req.body;
-    const result = await roundService.split(
-      Number(runId),
-      Number(roundStateId),
-      Number(handIndex),
-    );
+    const runId = Number(req.params.runId);
+    const result = await roundService.resolveBlind(runId);
     res.json(result);
   } catch (err) {
     console.error(err);

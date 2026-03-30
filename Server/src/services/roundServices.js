@@ -1,260 +1,119 @@
-const knex = require("../data/db/knex");
+// src/services/roundServices.js
+// Blind lifecycle orchestration for 21orBust.
+// Owns blind start, clear, fail, and ante progression.
 
-// ----------------- helpers -----------------
-function computeHandTotal(cards) {
-  let total = 0;
-  let aces = 0;
+const knex = require("../db/knex");
 
-  for (const c of cards) {
-    total += c.value;
-    if (c.rank === "A") aces += 1;
+// ------------------------------------------------------------
+// Blind configuration (authoritative defaults)
+// ------------------------------------------------------------
+const BLIND_CONFIG = {
+  small: { target: 80, hands: 3 },
+  big: { target: 160, hands: 3 },
+  boss: { target: 300, hands: 3 },
+};
+
+// ------------------------------------------------------------
+// Boss selection (deterministic placeholder)
+// Later this will be PRNG + ante-based weighting
+// ------------------------------------------------------------
+function selectBossForAnte(anteIndex) {
+  // Deterministic placeholder
+  return "boss_cutter";
+}
+
+// ------------------------------------------------------------
+// Start a new blind
+// ------------------------------------------------------------
+async function startBlind(runId, blindType) {
+  if (!BLIND_CONFIG[blindType]) {
+    throw new Error("Invalid blind type");
   }
 
-  while (total > 21 && aces > 0) {
-    total -= 10;
-    aces -= 1;
-  }
-
-  return total;
-}
-
-async function drawCards(trx, runId, count) {
-  const run = await trx("runs").where({ id: runId }).forUpdate().first();
-  if (!run) throw new Error("Run not found");
-
-  const cards = await trx("deck_cards")
-    .where({ run_id: runId })
-    .andWhere("position", ">=", run.next_position)
-    .orderBy("position", "asc")
-    .limit(count);
-
-  if (cards.length < count) {
-    throw new Error("Deck exhausted");
-  }
-
-  await trx("runs")
-    .where({ id: runId })
-    .update({ next_position: run.next_position + cards.length });
-
-  return cards;
-}
-
-async function getLatestRoundState(trx, runId) {
-  return trx("round_states")
-    .where({ run_id: runId })
-    .orderBy("round_number", "desc")
-    .first();
-}
-
-async function getRoundWithHandsByStateId(roundStateId) {
-  const roundState = await knex("round_states")
-    .where({ id: roundStateId })
-    .first();
-
-  if (!roundState) return null;
-
-  const hands = await knex("round_hands")
-    .where({ round_state_id: roundState.id })
-    .orderBy("hand_index", "asc");
-
-  return { roundState, hands };
-}
-
-// ----------------- start round -----------------
-async function startRound(runId) {
   return knex.transaction(async (trx) => {
-    const lastRound = await getLatestRoundState(trx, runId);
-    const nextRoundNumber = lastRound ? lastRound.round_number + 1 : 1;
+    const run = await trx("runs").where({ id: runId }).forUpdate().first();
+    if (!run) throw new Error("Run not found");
 
-    const [roundState] = await trx("round_states")
-      .insert({
-        run_id: runId,
-        round_number: nextRoundNumber,
-        created_at: trx.fn.now(),
-      })
-      .returning("*");
+    // Clear any existing blind/hand state
+    await trx("active_hand_state").where({ run_id: runId }).del();
+    await trx("active_blind_state").where({ run_id: runId }).del();
 
-    const cards = await drawCards(trx, runId, 2);
-    const total = computeHandTotal(cards);
+    const bossKey =
+      blindType === "boss" ? selectBossForAnte(run.ante_index) : null;
 
-    await trx("round_hands").insert({
-      round_state_id: roundState.id,
-      hand_index: 0,
-      cards: JSON.stringify(cards),
-      total,
-      is_active: true,
-      is_finished: total >= 21,
+    await trx("active_blind_state").insert({
+      run_id: runId,
+      blind_type: blindType,
+      target_score: BLIND_CONFIG[blindType].target,
+      accumulated_score: 0,
+      hands_played: 0,
+      boss_key: bossKey,
     });
 
-    const hands = await trx("round_hands")
-      .where({ round_state_id: roundState.id })
-      .orderBy("hand_index", "asc");
-
-    return { roundState, hands };
+    return {
+      blind_type: blindType,
+      target_score: BLIND_CONFIG[blindType].target,
+      boss_key: bossKey,
+    };
   });
 }
 
-// ----------------- get current round -----------------
-async function getCurrentRound(runId) {
-  const roundState = await knex("round_states")
-    .where({ run_id: runId })
-    .orderBy("round_number", "desc")
-    .first();
-
-  if (!roundState) return null;
-
-  const hands = await knex("round_hands")
-    .where({ round_state_id: roundState.id })
-    .orderBy("hand_index", "asc");
-
-  return { roundState, hands };
-}
-
-// ----------------- hit -----------------
-async function hit(runId, roundStateId, handIndex) {
+// ------------------------------------------------------------
+// Resolve blind outcome (called after each hand resolution)
+// ------------------------------------------------------------
+async function resolveBlind(runId) {
   return knex.transaction(async (trx) => {
-    const hand = await trx("round_hands")
-      .where({ round_state_id: roundStateId, hand_index: handIndex })
+    const run = await trx("runs").where({ id: runId }).forUpdate().first();
+    if (!run) throw new Error("Run not found");
+
+    const blind = await trx("active_blind_state")
+      .where({ run_id: runId })
       .first();
 
-    if (!hand) throw new Error("Hand not found");
-    if (hand.is_finished) throw new Error("Hand already finished");
+    if (!blind) throw new Error("No active blind");
 
-    const cards = JSON.parse(hand.cards);
-    const [newCard] = await drawCards(trx, runId, 1);
-    cards.push(newCard);
+    const maxHands = BLIND_CONFIG[blind.blind_type].hands;
 
-    const total = computeHandTotal(cards);
-    const isBust = total > 21;
-    const isDone = isBust || total === 21;
+    // Blind cleared
+    if (blind.accumulated_score >= blind.target_score) {
+      await trx("runs")
+        .where({ id: runId })
+        .update({
+          ante_index: run.ante_index + 1,
+          updated_at: trx.fn.now(),
+        });
 
-    await trx("round_hands")
-      .where({ id: hand.id })
-      .update({
-        cards: JSON.stringify(cards),
-        total,
-        is_active: !isDone,
-        is_finished: isDone,
-      });
+      await trx("active_hand_state").where({ run_id: runId }).del();
+      await trx("active_blind_state").where({ run_id: runId }).del();
 
-    if (isDone) {
-      const nextHand = await trx("round_hands")
-        .where({ round_state_id: roundStateId, is_finished: false })
-        .andWhere("id", "!=", hand.id)
-        .orderBy("hand_index", "asc")
-        .first();
-
-      if (nextHand) {
-        await trx("round_hands")
-          .where({ id: nextHand.id })
-          .update({ is_active: true });
-      }
+      return {
+        result: "cleared",
+        nextAnte: run.ante_index + 1,
+      };
     }
 
-    const hands = await trx("round_hands")
-      .where({ round_state_id: roundStateId })
-      .orderBy("hand_index", "asc");
-
-    return { hands };
-  });
-}
-
-// ----------------- stay -----------------
-async function stay(roundStateId, handIndex) {
-  return knex.transaction(async (trx) => {
-    const hand = await trx("round_hands")
-      .where({ round_state_id: roundStateId, hand_index: handIndex })
-      .first();
-
-    if (!hand) throw new Error("Hand not found");
-    if (hand.is_finished) throw new Error("Hand already finished");
-
-    await trx("round_hands")
-      .where({ id: hand.id })
-      .update({ is_active: false, is_finished: true });
-
-    const nextHand = await trx("round_hands")
-      .where({ round_state_id: roundStateId, is_finished: false })
-      .orderBy("hand_index", "asc")
-      .first();
-
-    if (nextHand) {
-      await trx("round_hands")
-        .where({ id: nextHand.id })
-        .update({ is_active: true });
-    }
-
-    const hands = await trx("round_hands")
-      .where({ round_state_id: roundStateId })
-      .orderBy("hand_index", "asc");
-
-    return { hands };
-  });
-}
-
-// ----------------- split -----------------
-async function split(runId, roundStateId, handIndex) {
-  return knex.transaction(async (trx) => {
-    const hand = await trx("round_hands")
-      .where({ round_state_id: roundStateId, hand_index: handIndex })
-      .first();
-
-    if (!hand) throw new Error("Hand not found");
-    if (hand.is_finished) throw new Error("Hand already finished");
-
-    const cards = JSON.parse(hand.cards);
-    if (cards.length !== 2)
-      throw new Error("Can only split with exactly two cards");
-    if (cards[0].value !== cards[1].value)
-      throw new Error("Can only split equal-value cards");
-
-    const firstCard = cards[0];
-    const secondCard = cards[1];
-
-    const newCards = await drawCards(trx, runId, 2);
-    const firstHandCards = [firstCard, newCards[0]];
-    const secondHandCards = [secondCard, newCards[1]];
-
-    const firstTotal = computeHandTotal(firstHandCards);
-    const secondTotal = computeHandTotal(secondHandCards);
-
-    await trx("round_hands")
-      .where({ id: hand.id })
-      .update({
-        cards: JSON.stringify(firstHandCards),
-        total: firstTotal,
-        is_active: true,
-        is_finished: firstTotal >= 21,
+    // Blind failed
+    if (blind.hands_played >= maxHands) {
+      await trx("runs").where({ id: runId }).update({
+        is_complete: true,
+        completed_at: trx.fn.now(),
+        updated_at: trx.fn.now(),
       });
 
-    const maxIndexRow = await trx("round_hands")
-      .where({ round_state_id: roundStateId })
-      .max("hand_index as max_index")
-      .first();
+      return {
+        result: "failed",
+      };
+    }
 
-    const newIndex = (maxIndexRow.max_index ?? 0) + 1;
-
-    await trx("round_hands").insert({
-      round_state_id: roundStateId,
-      hand_index: newIndex,
-      cards: JSON.stringify(secondHandCards),
-      total: secondTotal,
-      is_active: false,
-      is_finished: secondTotal >= 21,
-    });
-
-    const hands = await trx("round_hands")
-      .where({ round_state_id: roundStateId })
-      .orderBy("hand_index", "asc");
-
-    return { hands };
+    // Blind still active
+    return {
+      result: "ongoing",
+      handsRemaining: maxHands - blind.hands_played,
+    };
   });
 }
 
 module.exports = {
-  startRound,
-  getCurrentRound,
-  hit,
-  stay,
-  split,
+  startBlind,
+  resolveBlind,
 };

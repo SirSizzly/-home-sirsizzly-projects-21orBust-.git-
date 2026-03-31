@@ -1,20 +1,48 @@
 const express = require("express");
 const router = express.Router();
-const runController = require("../controllers/runController");
 
-// Run lifecycle
-router.post("/start", runController.startRun);
-router.get("/:id", runController.getRun);
+const runService = require("../services/runService");
+const runstateService = require("../services/runstateService");
 
-// Hand actions
-router.post("/:id/action/hit", runController.hit);
-router.post("/:id/action/stay", runController.stay);
+// START A NEW RUN
+router.post("/start", async (req, res) => {
+  try {
+    // Create the run
+    const run = await runService.startRun();
 
-// Round transitions
-router.post("/:id/action/next-hand", runController.nextHand);
-router.post("/:id/action/next-blind", runController.nextBlind);
+    // Build initial state
+    const state = await runstateService.getRunState(run.id);
 
-// Deck info
-router.get("/:id/deck", runController.getDeck);
+    // IMPORTANT: return runId explicitly
+    res.json({
+      runId: run.id,
+      ...state,
+    });
+  } catch (err) {
+    console.error("Error starting run:", err);
+    res.status(500).json({ error: "Failed to start run" });
+  }
+});
+
+// GET RUN STATE
+router.get("/:id", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+
+    if (isNaN(id)) {
+      return res.status(400).json({ error: "Invalid run ID" });
+    }
+
+    const state = await runstateService.getRunState(id);
+    if (!state) {
+      return res.status(404).json({ error: "Run not found" });
+    }
+
+    res.json(state);
+  } catch (err) {
+    console.error("Error fetching run:", err);
+    res.status(500).json({ error: "Failed to fetch run" });
+  }
+});
 
 module.exports = router;

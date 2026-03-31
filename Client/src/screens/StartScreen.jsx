@@ -4,18 +4,15 @@ import React from "react";
 export default function StartScreen({ onStart }) {
   return (
     <div style={styles.container}>
-      {/* Title */}
       <div style={styles.titleWrapper}>
         <h1 style={styles.title}>21orBust</h1>
         <p style={styles.subtitle}>A Game of Risk, Ruin, and Arcane Fortune</p>
       </div>
 
-      {/* Start Button */}
       <button style={styles.startButton} onClick={onStart}>
         Begin Your Run
       </button>
 
-      {/* Footer */}
       <p style={styles.footer}>
         Enter the Vault. Face the Blinds. Defy the Deck.
       </p>
@@ -29,7 +26,7 @@ const styles = {
     width: "100vw",
     background: `
       linear-gradient(rgba(0,0,0,0.6), rgba(0,0,0,0.8)),
-      url('/stone-wall.png')
+      url('http://localhost:3000/backgrounds/stone-wall.png')
     `,
     backgroundSize: "cover",
     backgroundPosition: "center",
@@ -42,9 +39,7 @@ const styles = {
     textAlign: "center",
   },
 
-  titleWrapper: {
-    marginBottom: "40px",
-  },
+  titleWrapper: { marginBottom: "40px" },
 
   title: {
     fontSize: "5rem",

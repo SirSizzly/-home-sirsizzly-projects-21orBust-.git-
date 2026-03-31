@@ -1,3 +1,4 @@
+// CLIENT/src/screens/GameplayScreen.jsx
 import { useEffect, useState } from "react";
 import { getRun, hit, stay, nextHand, nextBlind } from "../api/runApi";
 import CardFactory from "../components/cards/CardFactory";
@@ -132,7 +133,7 @@ export default function GameplayScreen({ runId, onShop }) {
         />
       </div>
 
-      {/* RELICS — 2 GREY SQUARES */}
+      {/* RELICS */}
       <div style={styles.relicBar}>
         {[0, 1].map((slot) => {
           const relic = inventory.relics[slot];
@@ -150,8 +151,12 @@ export default function GameplayScreen({ runId, onShop }) {
 const styles = {
   container: {
     minHeight: "100vh",
-    background: "url('/stone-texture.png'), #0d0d0d",
+    background: `
+      linear-gradient(rgba(0,0,0,0.4), rgba(0,0,0,0.7)),
+      url("http://localhost:3000/actions/casino_bg.png")
+    `,
     backgroundSize: "cover",
+    backgroundPosition: "center",
     padding: "20px",
     color: "#e6e6e6",
     fontFamily: "Cinzel, serif",
@@ -267,7 +272,7 @@ const styles = {
     marginRight: "auto",
   },
 
-  /* BUTTON IMAGES */
+  /* BUTTON IMAGES — FIXED PATHS */
   hitBtn: {
     width: 120,
     height: 50,

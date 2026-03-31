@@ -1,197 +1,147 @@
-const knex = require("../data/db/knex");
-const roundService = require("./roundService");
-const shopService = require("./shopService");
-const modifierService = require("./modifierService");
+// src/services/runprogressionService.js
+// Handles blind progression, ante advancement, and boss rotation.
+// Pure orchestration: DB + blindEngine + runstateService.
 
-// ----------------- scoring helpers -----------------
-function scoreHand(hand) {
-  if (hand.total > 21) {
-    return {
-      result: "bust",
-      score: 0,
-      multiplier: 0,
-    };
+const knex = require("../db/knex");
+const {
+  createBlindState,
+  applyHandScoreToBlind,
+  evaluateBlindOutcome,
+  getBossByKey,
+  BOSS_BLINDS,
+} = require("../engines/blindEngine");
+
+// Boss rotation order (deterministic)
+const BOSS_ORDER = [
+  "the_crack_down",
+  "the_tightening",
+  "the_jammer",
+  "the_taxman",
+  "the_grinder",
+  "boss_scramble",
+];
+
+// ------------------------------------------------------------
+// Advance to next blind (small → big → boss → next ante)
+// ------------------------------------------------------------
+async function advanceBlind(trx, run) {
+  const currentBlind = await trx("active_blind_state")
+    .where({ run_id: run.id })
+    .first();
+
+  let nextBlindType = "small";
+  let nextBossKey = null;
+  let nextAnte = run.ante_index;
+
+  if (!currentBlind) {
+    // First blind of the run
+    nextBlindType = "small";
+  } else if (currentBlind.blind_type === "small") {
+    nextBlindType = "big";
+  } else if (currentBlind.blind_type === "big") {
+    nextBlindType = "boss";
+    nextBossKey = pickNextBoss(run);
+  } else if (currentBlind.blind_type === "boss") {
+    // Completed full cycle → next ante
+    nextAnte = run.ante_index + 1;
+    nextBlindType = "small";
   }
 
-  const cards = JSON.parse(hand.cards);
+  const newBlind = createBlindState({
+    blindType: nextBlindType,
+    anteIndex: nextAnte,
+    bossKey: nextBossKey,
+  });
 
-  if (hand.total === 21 && cards.length === 2) {
-    return {
-      result: "blackjack",
-      score: 50,
-      multiplier: 2,
-    };
-  }
+  // Replace blind row
+  await trx("active_blind_state").where({ run_id: run.id }).del();
 
-  return {
-    result: "normal",
-    score: hand.total,
-    multiplier: 1,
-  };
+  await trx("active_blind_state").insert({
+    run_id: run.id,
+    blind_type: newBlind.blind_type,
+    target_score: newBlind.target_score,
+    accumulated_score: newBlind.accumulated_score,
+    hands_played: newBlind.hands_played,
+    boss_key: newBlind.boss_key,
+  });
+
+  // Update run ante
+  await trx("runs").where({ id: run.id }).update({
+    ante_index: nextAnte,
+    updated_at: trx.fn.now(),
+  });
+
+  return newBlind;
 }
 
-function scoreRoundBase(hands) {
-  let totalScore = 0;
-  let streakBonus = 0;
-  let handResults = [];
-  let allBust = true;
-
-  for (const hand of hands) {
-    const result = scoreHand(hand);
-    handResults.push({ hand_index: hand.hand_index, ...result });
-
-    totalScore += result.score * result.multiplier;
-
-    if (result.result === "blackjack") streakBonus += 25;
-    if (result.result !== "bust") allBust = false;
-  }
-
-  return {
-    totalScore,
-    streakBonus,
-    handResults,
-    allBust,
-  };
+// ------------------------------------------------------------
+// Boss rotation (deterministic)
+// ------------------------------------------------------------
+function pickNextBoss(run) {
+  const index = (run.ante_index - 1) % BOSS_ORDER.length;
+  return BOSS_ORDER[index];
 }
 
-// ----------------- apply round results -----------------
-async function applyRoundResults(runId, roundStateId) {
+// ------------------------------------------------------------
+// Apply score to blind and evaluate outcome
+// ------------------------------------------------------------
+async function applyScoreAndEvaluate(runId, handScore) {
   return knex.transaction(async (trx) => {
-    const hands = await trx("round_hands")
-      .where({ round_state_id: roundStateId })
-      .orderBy("hand_index", "asc");
-
-    if (hands.length === 0) {
-      throw new Error("No hands found for round");
-    }
-
-    const baseScoring = scoreRoundBase(hands);
-
-    // apply jokers, relics, card buffs/enhancers/changers
-    const scoring = await modifierService.applyScoringModifiers(runId, {
-      hands,
-      ...baseScoring,
-    });
-
     const run = await trx("runs").where({ id: runId }).first();
     if (!run) throw new Error("Run not found");
 
-    const prevScore = run.score || 0;
-    const prevStreak = run.streak || 0;
+    const blind = await trx("active_blind_state")
+      .where({ run_id: runId })
+      .first();
 
-    const newScore = prevScore + scoring.totalScore + scoring.streakBonus;
-    const newStreak = scoring.allBust ? 0 : prevStreak + 1;
+    if (!blind) throw new Error("Blind state missing");
 
-    const runUpdate = {
-      score: newScore,
-      streak: newStreak,
-      updated_at: trx.fn.now(),
-    };
+    // Apply score
+    const updatedBlind = applyHandScoreToBlind(blind, handScore);
 
-    if (scoring.allBust) {
-      runUpdate.is_complete = true;
-      runUpdate.completed_at = trx.fn.now();
+    await trx("active_blind_state").where({ run_id: runId }).update({
+      accumulated_score: updatedBlind.accumulated_score,
+      hands_played: updatedBlind.hands_played,
+    });
+
+    // Evaluate outcome
+    const outcome = evaluateBlindOutcome(updatedBlind);
+
+    if (outcome.cleared) {
+      const nextBlind = await advanceBlind(trx, run);
+
+      // Clear active hands for next blind
+      await trx("active_hand_state").where({ run_id: runId }).del();
+
+      return {
+        status: "cleared",
+        nextBlind,
+      };
     }
 
-    await trx("runs").where({ id: runId }).update(runUpdate);
-
-    await trx("round_states")
-      .where({ id: roundStateId })
-      .update({
+    if (outcome.failed) {
+      // Mark run as complete (loss)
+      await trx("runs").where({ id: runId }).update({
         is_complete: true,
-        round_score: scoring.totalScore,
-        streak_bonus: scoring.streakBonus,
-        results_json: JSON.stringify(scoring.handResults),
+        completed_at: trx.fn.now(),
+        updated_at: trx.fn.now(),
       });
 
+      return {
+        status: "failed",
+        nextBlind: null,
+      };
+    }
+
     return {
-      scoring,
-      newScore,
-      newStreak,
-      runEnded: !!runUpdate.is_complete,
+      status: "in_progress",
+      nextBlind: null,
     };
   });
-}
-
-// ----------------- complete round and open shop -----------------
-async function nextRound(runId) {
-  const current = await roundService.getCurrentRound(runId);
-
-  if (!current) {
-    const first = await roundService.startRound(runId);
-    return {
-      message: "Started first round",
-      runEnded: false,
-      scoring: null,
-      shop: null,
-      nextRound: first,
-    };
-  }
-
-  const { roundState, hands } = current;
-
-  if (!hands.every((h) => h.is_finished)) {
-    throw new Error("Cannot advance — round still in progress");
-  }
-
-  const result = await applyRoundResults(runId, roundState.id);
-
-  if (result.runEnded) {
-    return {
-      message: "Run ended after this round",
-      scoring: result.scoring,
-      runEnded: true,
-      shop: null,
-      nextRound: null,
-    };
-  }
-
-  const shop = await shopService.createOrGetShopForRound(
-    runId,
-    roundState.round_number,
-  );
-
-  return {
-    message: "Round complete, shop available",
-    scoring: result.scoring,
-    runEnded: false,
-    shop,
-    nextRound: null,
-  };
-}
-
-// ----------------- explicit end run -----------------
-async function endRun(runId) {
-  const run = await knex("runs").where({ id: runId }).first();
-  if (!run) throw new Error("Run not found");
-
-  if (run.is_complete) {
-    return {
-      message: "Run already complete",
-      finalScore: run.score || 0,
-      streak: run.streak || 0,
-    };
-  }
-
-  await knex("runs").where({ id: runId }).update({
-    is_complete: true,
-    completed_at: knex.fn.now(),
-    updated_at: knex.fn.now(),
-  });
-
-  const updated = await knex("runs").where({ id: runId }).first();
-
-  return {
-    message: "Run complete",
-    finalScore: updated.score || 0,
-    streak: updated.streak || 0,
-  };
 }
 
 module.exports = {
-  scoreHand,
-  scoreRoundBase,
-  applyRoundResults,
-  nextRound,
-  endRun,
+  applyScoreAndEvaluate,
+  advanceBlind,
+  pickNextBoss,
 };

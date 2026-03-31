@@ -1,35 +1,23 @@
-// src/app.js
 const express = require("express");
+const cors = require("cors");
 const app = express();
 
-// ------------------------------------------------------------
-// Middleware
-// ------------------------------------------------------------
 app.use(express.json());
 
-// ------------------------------------------------------------
-// Modifier registry (MUST load before routes)
-// ------------------------------------------------------------
-require("./services/modifierRegistry");
+app.use(
+  cors({
+    origin: "http://127.0.0.1:5173",
+    credentials: true,
+  }),
+);
 
-// ------------------------------------------------------------
-// Routes
-// ------------------------------------------------------------
-const runRoutes = require("./routes/runRoutes");
-const runstateRoutes = require("./routes/runstateRoutes");
-const roundRoutes = require("./routes/roundRoutes");
-const shopRoutes = require("./routes/shopRoutes");
-
-app.use("/api/runs", runRoutes);
-app.use("/api", runstateRoutes);
-app.use("/api", roundRoutes);
-app.use("/api", shopRoutes);
-
-// ------------------------------------------------------------
-// Health check
-// ------------------------------------------------------------
+// HEALTH CHECK
 app.get("/health", (req, res) => {
   res.json({ ok: true });
 });
+
+// ROUTES
+app.use("/api/run", require("./routes/runRoutes"));
+app.use("/api/shop", require("./routes/shopRoutes"));
 
 module.exports = app;

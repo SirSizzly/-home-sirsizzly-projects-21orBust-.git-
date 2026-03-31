@@ -1,58 +1,50 @@
-// deckEngine.js
-// 104-card deck, sequential draw, no discard
+// Server/src/engines/deckEngine.js
+// 104-card deck, sequential draw, no discard.
+// Uses PRNG for shuffling and the canonical deck generator.
 
 const { nextInt } = require("./prngEngine");
+const { generateDoubleDeck } = require("../utils/deckGenerator");
+const { SUITS, RANKS } = require("./cardEngine");
 
-const SUITS = ["club", "diamond", "heart", "spade"];
-const RANKS = [
-  "2",
-  "3",
-  "4",
-  "5",
-  "6",
-  "7",
-  "8",
-  "9",
-  "10",
-  "J",
-  "Q",
-  "K",
-  "A",
-];
-
+// Create a fresh 104-card deck state
 function createDeck() {
-  const deck = [];
-  for (let d = 0; d < 2; d++) {
-    for (const suit of SUITS) {
-      for (const rank of RANKS) {
-        deck.push({
-          id: `${rank}_${suit}_${d}`,
-          rank,
-          suit,
-          enhancement: null,
-        });
-      }
-    }
-  }
-  return deck;
+  const cards = generateDoubleDeck(); // already has id, rank, suit, image_key, enhancement
+  return {
+    cards,
+    position: 0,
+  };
 }
 
-function shuffle(deck) {
-  const result = deck.slice();
-  for (let i = result.length - 1; i > 0; i--) {
+// Fisher–Yates shuffle using deterministic PRNG
+function shuffle(deckState) {
+  const cards = deckState.cards.slice();
+
+  for (let i = cards.length - 1; i > 0; i--) {
     const j = nextInt(i + 1);
-    [result[i], result[j]] = [result[j], result[i]];
+    [cards[i], cards[j]] = [cards[j], cards[i]];
   }
-  return result;
+
+  return {
+    ...deckState,
+    cards,
+    position: 0,
+  };
 }
 
+// Draw the next card in sequence
 function draw(deckState) {
+  if (deckState.position >= deckState.cards.length) {
+    throw new Error("Deck exhausted");
+  }
+
   const card = deckState.cards[deckState.position];
   deckState.position += 1;
   return card;
 }
 
 module.exports = {
+  SUITS,
+  RANKS,
   createDeck,
   shuffle,
   draw,

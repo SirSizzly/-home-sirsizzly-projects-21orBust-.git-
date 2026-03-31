@@ -5,11 +5,22 @@
 const knex = require("../db/knex");
 const { generateSeed, generateDeck } = require("../utils/deckGenerator");
 
+/**
+ * Start a new run:
+ * - generate deterministic seed
+ * - generate full 104-card deck from that seed
+ * - persist run row
+ * - persist deck_cards rows
+ * - initialize run_stats row
+ *
+ * Blind/hand state is created lazily by runstateService.
+ */
 async function startRun() {
   const seed = generateSeed();
   const deck = generateDeck(seed);
 
-  return await knex.transaction(async (trx) => {
+  return knex.transaction(async (trx) => {
+    // Create run
     const [run] = await trx("runs")
       .insert({
         seed,
@@ -24,9 +35,10 @@ async function startRun() {
       })
       .returning("*");
 
+    // Persist deck into deck_cards
     const deckRows = deck.map((card, index) => ({
       run_id: run.id,
-      position: index,
+      position: index, // 0–103
       card_id: card.id,
       suit: card.suit,
       rank: card.rank,
@@ -36,6 +48,7 @@ async function startRun() {
 
     await trx("deck_cards").insert(deckRows);
 
+    // Initialize run_stats
     await trx("run_stats").insert({
       run_id: run.id,
       highest_ante: 0,
@@ -45,7 +58,7 @@ async function startRun() {
       busts: 0,
     });
 
-    // Do NOT create blind/hand here—runstateService will ensure them on demand.
+    // Return canonical run DTO
     return {
       id: run.id,
       seed: run.seed,
@@ -62,6 +75,9 @@ async function startRun() {
   });
 }
 
+/**
+ * Fetch a single run plus its stats.
+ */
 async function getRun(runId) {
   const run = await knex("runs").where({ id: runId }).first();
   if (!run) return null;
@@ -84,6 +100,9 @@ async function getRun(runId) {
   };
 }
 
+/**
+ * Mark a run as complete.
+ */
 async function completeRun(runId) {
   const run = await knex("runs").where({ id: runId }).first();
   if (!run) throw new Error("Run not found");

@@ -1,57 +1,88 @@
+// Client/src/pages/GamePage.jsx
+
 import { useEffect, useState } from "react";
 import { createRun, fetchRunState, applyHandAction } from "../api/runApi";
-import Hand from "../components/Hand.jsx";
+import Hand from "../components/Hand";
 
 export default function GamePage() {
-  const [state, setState] = useState(null);
+  const [runId, setRunId] = useState(null);
+  const [runState, setRunState] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // ------------------------------------------------------------
-  // Boot a new run and fetch authoritative state
-  // ------------------------------------------------------------
-  useEffect(() => {
-    async function boot() {
-      try {
-        const newRun = await createRun();
-        const snapshot = await fetchRunState(newRun.id);
-        setState(snapshot);
-      } catch (err) {
-        console.error("Failed to boot run:", err);
-      } finally {
-        setLoading(false);
-      }
-    }
+  async function startRun() {
+    setLoading(true);
+    const run = await createRun();
+    setRunId(run.id);
+    const state = await fetchRunState(run.id);
+    setRunState(state);
+    setLoading(false);
+  }
 
-    boot();
+  async function refreshRunState() {
+    if (!runId) return;
+    const state = await fetchRunState(runId);
+    setRunState(state);
+  }
+
+  useEffect(() => {
+    startRun();
   }, []);
 
-  // ------------------------------------------------------------
-  // Apply a hand action and refresh state
-  // ------------------------------------------------------------
   async function handleHandAction(handIndex, action) {
     try {
-      const updated = await applyHandAction(state.run.id, handIndex, action);
-      setState(updated);
+      await applyHandAction(runId, handIndex, action);
+      await refreshRunState();
     } catch (err) {
       console.error("Action failed:", err);
     }
   }
 
-  if (loading || !state) {
-    return <div style={{ color: "black" }}>Loading run…</div>;
+  if (loading || !runState) {
+    return <div className="p-4 text-white">Loading run…</div>;
   }
 
+  const { run, hands } = runState;
+
   return (
-    <div className="game-page">
-      <header>
-        <div>Gold: {state.run.gold}</div>
-        <div>Ante: {state.run.anteIndex}</div>
+    <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col">
+      <header className="p-4 border-b border-slate-700 flex justify-between items-center">
+        <div>
+          <div className="text-sm uppercase tracking-wide text-slate-400">
+            Run #{run.id}
+          </div>
+          <div className="text-lg font-semibold">Ante {run.anteIndex}</div>
+        </div>
+
+        <div className="flex gap-6 text-sm">
+          <div>
+            Gold: <span className="font-semibold">{run.gold}</span>
+          </div>
+          <div>
+            Fragile: <span className="font-semibold">{run.fragileStacks}</span>
+          </div>
+          <div>
+            Mult:{" "}
+            <span className="font-semibold">{run.permanentMultiplier}x</span>
+          </div>
+        </div>
       </header>
 
-      <main>
-        {state.hands.map((hand) => (
-          <Hand key={hand.hand_index} hand={hand} onAction={handleHandAction} />
-        ))}
+      <main className="flex-1 p-4">
+        <div className="bg-slate-800/60 rounded-lg p-4 border border-slate-700">
+          <div className="mb-2 text-sm uppercase tracking-wide text-slate-400">
+            Hands
+          </div>
+
+          <div className="flex flex-col gap-3">
+            {hands.map((hand) => (
+              <Hand
+                key={hand.hand_index}
+                hand={hand}
+                onAction={handleHandAction}
+              />
+            ))}
+          </div>
+        </div>
       </main>
     </div>
   );

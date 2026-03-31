@@ -1,43 +1,20 @@
-// src/routes/runRoutes.js
 const express = require("express");
 const router = express.Router();
+const runController = require("../controllers/runController");
 
-const runService = require("../services/runService");
+// Run lifecycle
+router.post("/start", runController.startRun);
+router.get("/:id", runController.getRun);
 
-// POST /api/runs — start a new run
-router.post("/", async (req, res) => {
-  try {
-    const run = await runService.startRun();
-    res.json(run);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to start run" });
-  }
-});
+// Hand actions
+router.post("/:id/action/hit", runController.hit);
+router.post("/:id/action/stay", runController.stay);
 
-// GET /api/runs/:id — get run metadata + stats
-router.get("/:id", async (req, res) => {
-  try {
-    const runId = Number(req.params.id);
-    const run = await runService.getRun(runId);
-    if (!run) return res.status(404).json({ error: "Run not found" });
-    res.json(run);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to fetch run" });
-  }
-});
+// Round transitions
+router.post("/:id/action/next-hand", runController.nextHand);
+router.post("/:id/action/next-blind", runController.nextBlind);
 
-// POST /api/runs/:id/complete — mark run complete
-router.post("/:id/complete", async (req, res) => {
-  try {
-    const runId = Number(req.params.id);
-    await runService.completeRun(runId);
-    res.json({ ok: true });
-  } catch (err) {
-    console.error(err);
-    res.status(400).json({ error: err.message });
-  }
-});
+// Deck info
+router.get("/:id/deck", runController.getDeck);
 
 module.exports = router;

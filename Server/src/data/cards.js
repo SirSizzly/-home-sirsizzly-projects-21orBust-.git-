@@ -1,32 +1,45 @@
-const SUITS = ["hearts", "diamonds", "clubs", "spades"];
+// Server/src/data/cards.js
+// Authoritative deck definition for 21orBust.
+
+const SUITS = ["club", "diamond", "heart", "spade"];
+
 const RANKS = [
-  { rank: "A", value: 11 },
-  { rank: "2", value: 2 },
-  { rank: "3", value: 3 },
-  { rank: "4", value: 4 },
-  { rank: "5", value: 5 },
-  { rank: "6", value: 6 },
-  { rank: "7", value: 7 },
-  { rank: "8", value: 8 },
-  { rank: "9", value: 9 },
-  { rank: "10", value: 10 },
-  { rank: "J", value: 10 },
-  { rank: "Q", value: 10 },
-  { rank: "K", value: 10 },
+  { code: "2", value: 2, imageBase: "two" },
+  { code: "3", value: 3, imageBase: "three" },
+  { code: "4", value: 4, imageBase: "four" },
+  { code: "5", value: 5, imageBase: "five" },
+  { code: "6", value: 6, imageBase: "six" },
+  { code: "7", value: 7, imageBase: "seven" },
+  { code: "8", value: 8, imageBase: "eight" },
+  { code: "9", value: 9, imageBase: "nine" },
+  { code: "10", value: 10, imageBase: "ten" },
+  { code: "J", value: 10, imageBase: "j" },
+  { code: "Q", value: 10, imageBase: "q" },
+  { code: "K", value: 10, imageBase: "k" },
+  { code: "A", value: 11, imageBase: "a" },
 ];
+
+// Canonical image key generator.
+// Matches files like: a_diamond.png, q_spade.png, ten_heart.png
+function imageKeyFor(rankCode, suit) {
+  const rank = RANKS.find((r) => r.code === rankCode);
+  if (!rank) throw new Error(`Unknown rank: ${rankCode}`);
+
+  return `${rank.imageBase}_${suit}`;
+}
 
 function generateBaseDeck() {
   const cards = [];
   let id = 1;
 
   for (const suit of SUITS) {
-    for (const { rank, value } of RANKS) {
+    for (const { code, value } of RANKS) {
       cards.push({
         id: id++,
         suit,
-        rank,
+        rank: code,
         value,
-        imageKey: `${rank}_of_${suit}`,
+        image_key: imageKeyFor(code, suit),
       });
     }
   }
@@ -35,18 +48,25 @@ function generateBaseDeck() {
 }
 
 function generateDoubleDeck() {
-  const deck1 = generateBaseDeck();
-  const deck2 = generateBaseDeck().map((card) => ({
-    ...card,
-    id: card.id + 1000, // ensure uniqueness in memory
+  const deck1 = generateBaseDeck().map((c) => ({
+    ...c,
+    deck_index: 0,
+    card_id: `${c.rank}_${c.suit}_0`,
+  }));
+
+  const deck2 = generateBaseDeck().map((c) => ({
+    ...c,
+    deck_index: 1,
+    card_id: `${c.rank}_${c.suit}_1`,
   }));
 
   return [...deck1, ...deck2];
 }
 
 module.exports = {
-  generateBaseDeck,
-  generateDoubleDeck,
   SUITS,
   RANKS,
+  imageKeyFor,
+  generateBaseDeck,
+  generateDoubleDeck,
 };

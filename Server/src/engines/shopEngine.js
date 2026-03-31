@@ -1,87 +1,103 @@
-// shopEngine.js
-// Authoritative shop logic for 21orBust.
-// Handles shop inventory, pricing, rerolls, purchases, and boss penalties.
+// src/engines/shopEngine.js
+// Pure shop logic: offer generation, pricing, reroll cost.
+// No DB, no side effects.
 
 const { nextInt } = require("./prngEngine");
 
-const BASE_PRICES = {
-  joker: 3,
-  relic: 4,
-  enhancement: 2,
-  pack: 5,
-};
+// Simple rarity buckets
+const JOKER_POOL = [
+  { key: "lucky_sevens", type: "joker", rarity: "common", basePrice: 4 },
+  { key: "face_parade", type: "joker", rarity: "common", basePrice: 4 },
+  { key: "even_odds", type: "joker", rarity: "uncommon", basePrice: 6 },
+  { key: "pressure_cooker", type: "joker", rarity: "rare", basePrice: 8 },
+];
 
-function generateShop(run, context) {
-  const shop = {
-    items: [],
-    rerollCost: 1,
-    usedDiscount: false,
-  };
+const RELIC_POOL = [
+  { key: "golden_ledger", type: "relic", rarity: "rare", basePrice: 10 },
+  { key: "loaded_deck", type: "relic", rarity: "uncommon", basePrice: 8 },
+  { key: "grave_marker", type: "relic", rarity: "uncommon", basePrice: 7 },
+];
 
-  // Boss: Inflation
-  if (context.boss === "boss_inflation") {
-    shop.rerollCost += 2;
-  }
+const ENHANCEMENT_POOL = [
+  {
+    key: "rank_ascension",
+    type: "enhancement",
+    rarity: "common",
+    basePrice: 3,
+  },
+  { key: "suit_changer", type: "enhancement", rarity: "common", basePrice: 3 },
+  { key: "phantom_ink", type: "enhancement", rarity: "uncommon", basePrice: 5 },
+  { key: "void_border", type: "enhancement", rarity: "rare", basePrice: 7 },
+];
 
-  // Generate 3 items deterministically
-  for (let i = 0; i < 3; i++) {
-    shop.items.push(generateItem(run));
-  }
-
-  return shop;
+function pickRandom(pool) {
+  if (!pool.length) return null;
+  const idx = nextInt(pool.length);
+  return pool[idx];
 }
 
-function generateItem(run) {
-  const roll = nextInt(100);
-
-  if (roll < 40) {
-    return { type: "enhancement", price: BASE_PRICES.enhancement };
-  }
-  if (roll < 70) {
-    return { type: "joker", price: BASE_PRICES.joker };
-  }
-  if (roll < 90) {
-    return { type: "relic", price: BASE_PRICES.relic };
-  }
-
-  return { type: "pack", price: BASE_PRICES.pack };
+function priceFor(item, anteIndex) {
+  const anteFactor = 1 + (anteIndex - 1) * 0.2;
+  return Math.max(1, Math.round(item.basePrice * anteFactor));
 }
 
-function rerollShop(shop, run) {
-  const cost = shop.rerollCost;
-  if (run.gold < cost) return false;
+function generateShopOffers({ anteIndex }) {
+  const offers = [];
 
-  run.gold -= cost;
-  shop.items = [];
-  for (let i = 0; i < 3; i++) {
-    shop.items.push(generateItem(run));
+  // 2 Jokers
+  for (let i = 0; i < 2; i++) {
+    const item = pickRandom(JOKER_POOL);
+    if (item) {
+      offers.push({
+        slot_index: offers.length,
+        key: item.key,
+        type: item.type,
+        rarity: item.rarity,
+        price: priceFor(item, anteIndex),
+        sold: false,
+      });
+    }
   }
 
-  return true;
+  // 1 Relic
+  {
+    const item = pickRandom(RELIC_POOL);
+    if (item) {
+      offers.push({
+        slot_index: offers.length,
+        key: item.key,
+        type: item.type,
+        rarity: item.rarity,
+        price: priceFor(item, anteIndex),
+        sold: false,
+      });
+    }
+  }
+
+  // 2 Enhancements
+  for (let i = 0; i < 2; i++) {
+    const item = pickRandom(ENHANCEMENT_POOL);
+    if (item) {
+      offers.push({
+        slot_index: offers.length,
+        key: item.key,
+        type: item.type,
+        rarity: item.rarity,
+        price: priceFor(item, anteIndex),
+        sold: false,
+      });
+    }
+  }
+
+  return offers;
 }
 
-function purchaseItem(shop, run, index) {
-  const item = shop.items[index];
-  if (!item) return false;
-
-  let price = item.price;
-
-  // Relic: Dealer’s Favor (one-time discount)
-  if (run.relics.some((r) => r.key === "dealers_favor") && !shop.usedDiscount) {
-    price = Math.max(0, price - 1);
-    shop.usedDiscount = true;
-  }
-
-  if (run.gold < price) return false;
-
-  run.gold -= price;
-  shop.items.splice(index, 1);
-
-  return item;
+function rerollCost(anteIndex, rerollsUsed) {
+  const base = 2 + (anteIndex - 1);
+  return base + rerollsUsed;
 }
 
 module.exports = {
-  generateShop,
-  rerollShop,
-  purchaseItem,
+  generateShopOffers,
+  rerollCost,
 };

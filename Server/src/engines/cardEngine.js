@@ -1,6 +1,5 @@
-// cardEngine.js
+// Server/src/engines/cardEngine.js
 // Authoritative card math and enhancement behavior for 21orBust.
-// This file defines how cards behave under all circumstances.
 // No other engine may reinterpret rank, suit, or value logic.
 
 const SUITS = ["club", "diamond", "heart", "spade"];
@@ -158,6 +157,7 @@ function cloneCard(card) {
     rank: card.rank,
     suit: card.suit,
     enhancement: card.enhancement ? { ...card.enhancement } : null,
+    image_key: card.image_key,
   };
 }
 

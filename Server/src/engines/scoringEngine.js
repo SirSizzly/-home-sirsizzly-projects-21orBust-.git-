@@ -1,180 +1,139 @@
-// scoringEngine.js
-// Authoritative scoring pipeline for 21orBust.
-// Implements base points, base modifiers, multiplier assembly,
-// pre-fragile score, and final score output.
+// Server/src/engines/scoringEngine.js
+// Pure scoring engine for 21orBust.
+// No DB, no side effects — returns a scoring breakdown object.
 
-const { countFaceCards, countRank, uniqueSuits } = require("./cardEngine");
+const {
+  calculateHandTotal,
+  countFaceCards,
+  countRank,
+  uniqueSuits,
+} = require("./cardEngine");
 
-function computeBasePoints(hand, context) {
-  const total = context.handTotal;
-
-  // Bust baseline
-  if (hand.busted) {
-    // Legendary Joker: House Always Loses
-    if (context.jokers.includes("house_always_loses")) {
-      return Math.floor(total * 10 * 0.5);
-    }
-
-    // Relic: Grave Marker
-    if (context.relics.includes("grave_marker")) {
-      return total * 10;
-    }
-
-    // Rare Joker: Blood Counter
-    if (context.jokers.includes("blood_counter")) {
-      return 50;
-    }
-
-    return 0;
-  }
-
-  let base = total * 10;
-
-  // Joker: Face Value
-  if (context.jokers.includes("face_value")) {
-    base += countFaceCards(hand.cards) * 10;
-  }
-
-  // Joker: Thin Margin
-  if (context.jokers.includes("thin_margin") && hand.cards.length === 2) {
-    base += 30;
-  }
-
-  // Joker: Even Odds
-  if (context.jokers.includes("even_odds") && total % 2 === 0) {
-    base += 20;
-  }
-
-  // Joker: Low Stakes
-  if (context.jokers.includes("low_stakes") && total < 18) {
-    base = Math.floor(base / 2);
-  }
-
-  // Boss: The Cutter
-  if (context.boss === "boss_cutter" && (total === 20 || total === 21)) {
-    base -= 20;
-  }
-
-  // Boss: The Short Stack
-  if (context.boss === "boss_short_stack" && total < 17) {
-    return 0;
-  }
-
-  // Boss: The Void
-  if (context.boss === "boss_void") {
-    base = Math.floor(base / 2);
-  }
-
-  return Math.max(0, base);
+// ------------------------------------------------------------
+// Base point rules
+// ------------------------------------------------------------
+function calculateBasePoints(handTotal, busted) {
+  if (busted) return 0;
+  return handTotal * 10; // Your rule: score = total * 10
 }
 
-function assembleMultiplier(hand, context) {
-  let mult = 1;
+// ------------------------------------------------------------
+// Base point modifiers (Jokers, Relics, Bosses)
+// ------------------------------------------------------------
+function applyBaseModifiers(basePoints, context, hand) {
+  let points = basePoints;
+  const effects = [];
 
-  // Permanent run multiplier
-  mult += context.run.permanentMultiplier;
-
-  const total = context.handTotal;
-
-  // Joker: High Card
-  if (context.jokers.includes("high_card") && total >= 19) {
-    mult += 1;
-  }
-
-  // Joker: Odd Luck
-  if (context.jokers.includes("odd_luck") && total % 2 === 1) {
-    mult += 1;
-  }
-
-  // Joker: Double Down (first hand of round)
-  if (context.jokers.includes("double_down") && context.firstHand) {
-    mult += 1;
-  }
-
-  // Joker: Dealer’s Smile (first blackjack)
-  if (
-    context.jokers.includes("dealers_smile") &&
-    hand.blackjack &&
-    context.firstBlackjack
-  ) {
-    mult += 1;
-  }
-
-  // Joker: Late Stay
-  if (
-    context.jokers.includes("late_stay") &&
-    hand.stayed &&
-    (total === 20 || total === 21)
-  ) {
-    mult += 1;
-  }
-
-  // Joker: Suit Stitch
-  if (context.jokers.includes("suit_stitch")) {
-    const suits = uniqueSuits(hand.cards);
-    if (suits.size >= 2) mult += 1;
-  }
-
-  // Joker: Suit Tyrant
-  if (context.jokers.includes("suit_tyrant")) {
-    const suits = uniqueSuits(hand.cards);
-    mult += suits.size === 1 ? 3 : -1;
-  }
-
-  // Joker: Face Parade
+  // Example: Face Parade (each face card +5 points)
   if (context.jokers.includes("face_parade")) {
-    mult += countFaceCards(hand.cards) * 0.5;
+    const faces = countFaceCards(hand.cards);
+    if (faces > 0) {
+      const bonus = faces * 5;
+      points += bonus;
+      effects.push({ type: "joker", key: "face_parade", bonus });
+    }
   }
 
-  // Joker: Lucky Sevens
+  // Example: Lucky Sevens (each 7 gives +7 points)
   if (context.jokers.includes("lucky_sevens")) {
     const sevens = countRank(hand.cards, "7");
-    mult += sevens * 2;
-    if (sevens === 3) mult += 5;
+    if (sevens > 0) {
+      const bonus = sevens * 7;
+      points += bonus;
+      effects.push({ type: "joker", key: "lucky_sevens", bonus });
+    }
   }
 
-  // Joker: Crown of Kings
-  if (context.jokers.includes("crown_of_kings")) {
-    mult += countRank(hand.cards, "K") * 1.5;
+  // Example: Suit Tyrant (all cards same suit → +20)
+  if (context.jokers.includes("suit_tyrant")) {
+    const suits = uniqueSuits(hand.cards);
+    if (suits.size === 1) {
+      points += 20;
+      effects.push({ type: "joker", key: "suit_tyrant", bonus: 20 });
+    }
   }
 
-  // Joker: Suit Alchemy
-  if (context.jokers.includes("suit_alchemy")) {
-    mult += uniqueSuits(hand.cards).size;
+  // Boss: The Taxman (reduce base points by 20%)
+  if (context.boss === "the_taxman") {
+    const reduction = Math.floor(points * 0.2);
+    points -= reduction;
+    effects.push({ type: "boss", key: "the_taxman", reduction });
   }
 
-  // Joker: Pressure Cooker
-  if (context.jokers.includes("pressure_cooker")) {
-    mult += context.run.fragileStacks * 0.5;
-  }
-
-  // Enhancement: Face Crown
-  if (context.enhancements.includes("face_crown")) {
-    mult += countFaceCards(hand.cards);
-  }
-
-  // Enhancement: Blackjack Booster
-  if (context.enhancements.includes("blackjack_booster") && hand.blackjack) {
-    mult += 2;
-  }
-
-  // Enhancement: Cursed Edge
-  if (context.enhancements.includes("cursed_edge")) {
-    mult += 3;
-  }
-
-  return mult;
+  return { points, effects };
 }
 
+// ------------------------------------------------------------
+// Multiplier assembly
+// ------------------------------------------------------------
+function assembleMultiplier(context, hand) {
+  let mult = 1;
+  const effects = [];
+
+  // Permanent multiplier
+  if (context.run.permanentMultiplier > 0) {
+    mult += context.run.permanentMultiplier;
+    effects.push({
+      type: "run",
+      key: "permanent_multiplier",
+      amount: context.run.permanentMultiplier,
+    });
+  }
+
+  // Example: Even Odds (if total is even, +1x)
+  if (context.jokers.includes("even_odds")) {
+    if (context.handTotal % 2 === 0) {
+      mult += 1;
+      effects.push({ type: "joker", key: "even_odds", amount: 1 });
+    }
+  }
+
+  // Example: Pressure Cooker (each hit adds +0.25x)
+  if (context.jokers.includes("pressure_cooker")) {
+    const bonus = hand.hitsTaken * 0.25;
+    mult += bonus;
+    effects.push({ type: "joker", key: "pressure_cooker", amount: bonus });
+  }
+
+  // Boss: The Grinder (multiplier reduced by 1)
+  if (context.boss === "the_grinder") {
+    mult = Math.max(1, mult - 1);
+    effects.push({ type: "boss", key: "the_grinder", amount: -1 });
+  }
+
+  return { mult, effects };
+}
+
+// ------------------------------------------------------------
+// Main scoring function
+// ------------------------------------------------------------
 function scoreHand(hand, context) {
-  const base = computeBasePoints(hand, context);
-  const multiplier = assembleMultiplier(hand, context);
-  const preFragile = base * multiplier;
+  const handTotal = context.handTotal;
+  const busted = hand.busted;
+
+  // 1. Base points
+  const basePoints = calculateBasePoints(handTotal, busted);
+
+  // 2. Base modifiers
+  const { points: modifiedBase, effects: baseEffects } = applyBaseModifiers(
+    basePoints,
+    context,
+    hand,
+  );
+
+  // 3. Multiplier assembly
+  const { mult, effects: multEffects } = assembleMultiplier(context, hand);
+
+  // 4. Pre-fragile score
+  const preFragileScore = Math.floor(modifiedBase * mult);
 
   return {
-    basePoints: base,
-    multiplier,
-    preFragileScore: preFragile,
+    basePoints,
+    modifiedBase,
+    multiplier: mult,
+    preFragileScore,
+    finalScore: preFragileScore, // fragile applied in runstateService
+    triggeredEffects: [...baseEffects, ...multEffects],
   };
 }
 

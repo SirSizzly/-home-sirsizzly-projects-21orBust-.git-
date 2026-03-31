@@ -1,227 +1,159 @@
 // src/services/shopService.js
-// Shop orchestration for 21orBust.
-// Owns shop inventory, purchases, rerolls, and persistence.
+// DB orchestration for shop state: get, reroll, buy.
 
 const knex = require("../db/knex");
+const { setSeed } = require("../engines/prngEngine");
+const { generateShopOffers, rerollCost } = require("../engines/shopEngine");
 
-// ------------------------------------------------------------
-// Configuration (authoritative defaults)
-// ------------------------------------------------------------
-const SHOP_CONFIG = {
-  jokerSlots: 3,
-  relicSlots: 1,
-  enhancementPacks: 1,
-  baseRerollCost: 1,
-  jokerCost: 3,
-  relicCost: 5,
-  enhancementPackCost: 4,
-};
-
-// Placeholder pools (keys only; effects live elsewhere)
-const JOKER_POOL = [
-  "face_value",
-  "thin_margin",
-  "even_odds",
-  "high_card",
-  "odd_luck",
-];
-
-const RELIC_POOL = ["grave_marker", "void_charm"];
-
-// ------------------------------------------------------------
-// Deterministic picker
-// ------------------------------------------------------------
-function pickFromPool(pool, seed, count) {
-  const picks = [];
-  let cursor = seed % pool.length;
-
-  for (let i = 0; i < count; i++) {
-    picks.push(pool[cursor]);
-    cursor = (cursor + 1) % pool.length;
-  }
-
-  return picks;
-}
-
-// ------------------------------------------------------------
-// Ensure shop exists (resume-safe)
-// ------------------------------------------------------------
+// Ensure active_shop_state row exists
 async function ensureShopState(trx, run) {
-  let shop = await trx("active_shop_state").where({ run_id: run.id }).first();
-  if (shop) return shop;
+  let row = await trx("active_shop_state").where({ run_id: run.id }).first();
 
-  const jokers = pickFromPool(
-    JOKER_POOL,
-    run.seed + run.ante_index,
-    SHOP_CONFIG.jokerSlots,
-  );
+  if (row) return row;
 
-  const relics = pickFromPool(
-    RELIC_POOL,
-    run.seed + run.ante_index * 7,
-    SHOP_CONFIG.relicSlots,
-  );
+  // Seed PRNG from run seed + ante to keep deterministic
+  setSeed(run.seed + run.ante_index * 1000);
+  const offers = generateShopOffers({ anteIndex: run.ante_index });
 
   await trx("active_shop_state").insert({
     run_id: run.id,
-    jokers: JSON.stringify(jokers),
-    relics: JSON.stringify(relics),
-    enhancement_packs: SHOP_CONFIG.enhancementPacks,
-    reroll_cost: SHOP_CONFIG.baseRerollCost,
+    offers: JSON.stringify(offers),
+    rerolls_used: 0,
   });
 
-  return trx("active_shop_state").where({ run_id: run.id }).first();
+  row = await trx("active_shop_state").where({ run_id: run.id }).first();
+
+  return row;
 }
 
-// ------------------------------------------------------------
-// Snapshot
-// ------------------------------------------------------------
 async function getShopState(runId) {
   return knex.transaction(async (trx) => {
     const run = await trx("runs").where({ id: runId }).first();
-    if (!run) return null;
+    if (!run) throw new Error("Run not found");
 
-    const shop = await ensureShopState(trx, run);
+    const row = await ensureShopState(trx, run);
 
     return {
-      gold: run.gold,
-      jokers: JSON.parse(shop.jokers),
-      relics: JSON.parse(shop.relics),
-      enhancementPacks: shop.enhancement_packs,
-      rerollCost: shop.reroll_cost,
+      run: {
+        id: run.id,
+        gold: run.gold,
+        anteIndex: run.ante_index,
+      },
+      shop: {
+        offers: Array.isArray(row.offers) ? row.offers : JSON.parse(row.offers),
+        rerolls_used: row.rerolls_used || 0,
+      },
     };
   });
 }
 
-// ------------------------------------------------------------
-// Buy item
-// ------------------------------------------------------------
-async function buyItem(runId, type, index) {
+async function rerollShop(runId) {
   return knex.transaction(async (trx) => {
-    const run = await trx("runs").where({ id: runId }).forUpdate().first();
+    const run = await trx("runs").where({ id: runId }).first();
     if (!run) throw new Error("Run not found");
 
-    const shop = await ensureShopState(trx, run);
+    const row = await ensureShopState(trx, run);
+    const rerollsUsed = row.rerolls_used || 0;
 
-    if (type === "joker") {
-      const jokers = JSON.parse(shop.jokers);
-      const key = jokers[index];
-      if (!key) throw new Error("Invalid joker slot");
-      if (run.gold < SHOP_CONFIG.jokerCost) throw new Error("Not enough gold");
-
-      await trx("run_jokers").insert({
-        run_id: runId,
-        slot_index: Date.now(), // slot assignment handled elsewhere
-        joker_key: key,
-      });
-
-      jokers.splice(index, 1);
-
-      await trx("runs")
-        .where({ id: runId })
-        .update({
-          gold: run.gold - SHOP_CONFIG.jokerCost,
-        });
-
-      await trx("active_shop_state")
-        .where({ run_id: runId })
-        .update({
-          jokers: JSON.stringify(jokers),
-          updated_at: trx.fn.now(),
-        });
+    const cost = rerollCost(run.ante_index, rerollsUsed);
+    if (run.gold < cost) {
+      throw new Error("Not enough gold to reroll");
     }
 
-    if (type === "relic") {
-      const relics = JSON.parse(shop.relics);
-      const key = relics[index];
-      if (!key) throw new Error("Invalid relic slot");
-      if (run.gold < SHOP_CONFIG.relicCost) throw new Error("Not enough gold");
-
-      await trx("run_relics").insert({
-        run_id: runId,
-        slot_index: Date.now(),
-        relic_key: key,
-      });
-
-      relics.splice(index, 1);
-
-      await trx("runs")
-        .where({ id: runId })
-        .update({
-          gold: run.gold - SHOP_CONFIG.relicCost,
-        });
-
-      await trx("active_shop_state")
-        .where({ run_id: runId })
-        .update({
-          relics: JSON.stringify(relics),
-          updated_at: trx.fn.now(),
-        });
-    }
-
-    if (type === "enhancement_pack") {
-      if (shop.enhancement_packs <= 0) {
-        throw new Error("No enhancement packs available");
-      }
-      if (run.gold < SHOP_CONFIG.enhancementPackCost) {
-        throw new Error("Not enough gold");
-      }
-
-      await trx("runs")
-        .where({ id: runId })
-        .update({
-          gold: run.gold - SHOP_CONFIG.enhancementPackCost,
-        });
-
-      await trx("active_shop_state")
-        .where({ run_id: runId })
-        .update({
-          enhancement_packs: shop.enhancement_packs - 1,
-          updated_at: trx.fn.now(),
-        });
-    }
-
-    return getShopState(runId);
-  });
-}
-
-// ------------------------------------------------------------
-// Reroll jokers
-// ------------------------------------------------------------
-async function rerollJokers(runId) {
-  return knex.transaction(async (trx) => {
-    const run = await trx("runs").where({ id: runId }).forUpdate().first();
-    if (!run) throw new Error("Run not found");
-
-    const shop = await ensureShopState(trx, run);
-    if (run.gold < shop.reroll_cost) throw new Error("Not enough gold");
-
-    const jokers = pickFromPool(
-      JOKER_POOL,
-      run.seed + Date.now(),
-      SHOP_CONFIG.jokerSlots,
-    );
-
+    // Charge gold
     await trx("runs")
-      .where({ id: runId })
+      .where({ id: run.id })
       .update({
-        gold: run.gold - shop.reroll_cost,
-      });
-
-    await trx("active_shop_state")
-      .where({ run_id: runId })
-      .update({
-        jokers: JSON.stringify(jokers),
-        reroll_cost: shop.reroll_cost + 1,
+        gold: run.gold - cost,
         updated_at: trx.fn.now(),
       });
 
-    return getShopState(runId);
+    // New offers
+    setSeed(run.seed + run.ante_index * 1000 + rerollsUsed + 1);
+    const offers = generateShopOffers({ anteIndex: run.ante_index });
+
+    await trx("active_shop_state")
+      .where({ run_id: run.id })
+      .update({
+        offers: JSON.stringify(offers),
+        rerolls_used: rerollsUsed + 1,
+      });
+
+    return {
+      gold: run.gold - cost,
+      offers,
+      rerolls_used: rerollsUsed + 1,
+    };
   });
+}
+
+async function buyShopItem(runId, slotIndex) {
+  return knex.transaction(async (trx) => {
+    const run = await trx("runs").where({ id: runId }).first();
+    if (!run) throw new Error("Run not found");
+
+    const row = await ensureShopState(trx, run);
+    const offers = Array.isArray(row.offers)
+      ? row.offers
+      : JSON.parse(row.offers);
+
+    const offer = offers.find((o) => o.slot_index === slotIndex);
+    if (!offer) throw new Error("Offer not found");
+    if (offer.sold) throw new Error("Already purchased");
+    if (run.gold < offer.price) throw new Error("Not enough gold");
+
+    // Charge gold
+    await trx("runs")
+      .where({ id: run.id })
+      .update({
+        gold: run.gold - offer.price,
+        updated_at: trx.fn.now(),
+      });
+
+    // Mark as sold
+    offer.sold = true;
+
+    await trx("active_shop_state")
+      .where({ run_id: run.id })
+      .update({
+        offers: JSON.stringify(offers),
+      });
+
+    // Apply acquisition to inventory tables
+    if (offer.type === "joker") {
+      await trx("run_jokers").insert({
+        run_id: run.id,
+        joker_key: offer.key,
+        slot_index: await nextInventorySlot(trx, "run_jokers", run.id),
+      });
+    } else if (offer.type === "relic") {
+      await trx("run_relics").insert({
+        run_id: run.id,
+        relic_key: offer.key,
+        slot_index: await nextInventorySlot(trx, "run_relics", run.id),
+      });
+    }
+    // Enhancements are applied later when chosen for a card
+
+    return {
+      gold: run.gold - offer.price,
+      offers,
+      purchased: offer,
+    };
+  });
+}
+
+async function nextInventorySlot(trx, table, runId) {
+  const rows = await trx(table)
+    .where({ run_id: runId })
+    .orderBy("slot_index", "asc");
+
+  if (!rows.length) return 0;
+  return rows[rows.length - 1].slot_index + 1;
 }
 
 module.exports = {
   getShopState,
-  buyItem,
-  rerollJokers,
+  rerollShop,
+  buyShopItem,
 };

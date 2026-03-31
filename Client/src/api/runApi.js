@@ -1,39 +1,40 @@
-// Create a new run
-export async function createRun() {
-  const res = await fetch("/api/runs", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-  });
+const BASE = "http://localhost:3000/api";
 
-  if (!res.ok) {
-    throw new Error("Failed to create run");
-  }
-
+export async function startRun() {
+  const res = await fetch(`${BASE}/run/start`, { method: "POST" });
   return res.json();
 }
 
-// Fetch authoritative run state
-export async function fetchRunState(runId) {
-  const res = await fetch(`/api/runs/${runId}/state`);
-
-  if (!res.ok) {
-    throw new Error("Failed to fetch run state");
-  }
-
+export async function getRun(id) {
+  const res = await fetch(`${BASE}/run/${id}`);
   return res.json();
 }
 
-// Apply a hand action (hit / stay / double / split)
-export async function applyHandAction(runId, handIndex, action) {
-  const res = await fetch(`/api/runs/${runId}/hands/${handIndex}/action`, {
+export async function hit(id) {
+  const res = await fetch(`${BASE}/run/${id}/action/hit`, { method: "POST" });
+  return res.json();
+}
+
+export async function stay(id) {
+  const res = await fetch(`${BASE}/run/${id}/action/stay`, { method: "POST" });
+  return res.json();
+}
+
+export async function nextHand(id) {
+  const res = await fetch(`${BASE}/run/${id}/action/next-hand`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ action }),
   });
+  return res.json();
+}
 
-  if (!res.ok) {
-    throw new Error("Action failed");
-  }
+export async function nextBlind(id) {
+  const res = await fetch(`${BASE}/run/${id}/action/next-blind`, {
+    method: "POST",
+  });
+  return res.json();
+}
 
+export async function getDeck(id) {
+  const res = await fetch(`${BASE}/run/${id}/deck`);
   return res.json();
 }

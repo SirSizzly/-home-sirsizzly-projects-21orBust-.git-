@@ -1,64 +1,56 @@
 // Server/src/utils/deckGenerator.js
+// Deterministic deck generator for 21orBust.
+// Produces a 104-card double deck, shuffles it using the PRNG,
+// and returns the full deck in the exact shape required by runService.
 
+const { generateDoubleDeck } = require("../data/cards");
+const { setSeed, nextInt } = require("../engines/prngEngine");
+
+/**
+ * Generate a numeric seed for the PRNG.
+ * You can replace this with crypto.randomUUID() or similar later.
+ */
 function generateSeed() {
-  return Math.floor(Math.random() * Number.MAX_SAFE_INTEGER);
+  return Date.now();
 }
 
-function mulberry32(seed) {
-  return function () {
-    seed |= 0;
-    seed = (seed + 0x6d2b79f5) | 0;
-    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
+/**
+ * Deterministic Fisher–Yates shuffle using the PRNG engine.
+ */
+function shuffleDeterministic(cards) {
+  const arr = cards.slice();
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = nextInt(i + 1);
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
 }
 
+/**
+ * Generate a full 104-card deck from a seed.
+ * This is the ONLY function runService should call.
+ *
+ * Returns an array of card objects:
+ * {
+ *   card_id: "Q_club_0",
+ *   rank: "Q",
+ *   suit: "club",
+ *   value: 10,
+ *   image_key: "q_club",
+ *   deck_index: 0 or 1
+ * }
+ */
 function generateDeck(seed) {
-  const suits = ["hearts", "diamonds", "clubs", "spades"];
-  const ranks = [
-    { rank: "A", value: 11 },
-    { rank: "2", value: 2 },
-    { rank: "3", value: 3 },
-    { rank: "4", value: 4 },
-    { rank: "5", value: 5 },
-    { rank: "6", value: 6 },
-    { rank: "7", value: 7 },
-    { rank: "8", value: 8 },
-    { rank: "9", value: 9 },
-    { rank: "10", value: 10 },
-    { rank: "J", value: 10 },
-    { rank: "Q", value: 10 },
-    { rank: "K", value: 10 },
-  ];
+  // Initialize PRNG
+  setSeed(seed);
 
-  const deck = [];
-  let id = 1;
+  // Build the canonical 104-card deck
+  const deck = generateDoubleDeck();
 
-  // Double deck (104 cards)
-  for (let i = 0; i < 2; i++) {
-    for (const suit of suits) {
-      for (const r of ranks) {
-        deck.push({
-          id: id++,
-          suit,
-          rank: r.rank,
-          value: r.value,
-          image_key: `${r.rank}_of_${suit}`,
-        });
-      }
-    }
-  }
+  // Shuffle deterministically
+  const shuffled = shuffleDeterministic(deck);
 
-  const rand = mulberry32(seed);
-
-  // Deterministic shuffle
-  for (let i = deck.length - 1; i > 0; i--) {
-    const j = Math.floor(rand() * (i + 1));
-    [deck[i], deck[j]] = [deck[j], deck[i]];
-  }
-
-  return deck;
+  return shuffled;
 }
 
 module.exports = {

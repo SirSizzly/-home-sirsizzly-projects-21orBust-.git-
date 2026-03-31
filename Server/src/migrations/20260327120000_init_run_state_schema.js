@@ -31,22 +31,11 @@ exports.up = async function (knex) {
       hands_played INTEGER NOT NULL DEFAULT 0,
       boss_key TEXT NULL
     );
-
-    CREATE TABLE IF NOT EXISTS active_hand_state (
-      run_id INTEGER PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE,
-      hand_index INTEGER NOT NULL DEFAULT 0,
-      cards JSONB NOT NULL DEFAULT '[]'::jsonb,
-      resolved BOOLEAN NOT NULL DEFAULT FALSE,
-      stayed BOOLEAN NOT NULL DEFAULT FALSE,
-      busted BOOLEAN NOT NULL DEFAULT FALSE,
-      void_border_used BOOLEAN NOT NULL DEFAULT FALSE
-    );
   `);
 };
 
 exports.down = async function (knex) {
   await knex.raw(`
-    DROP TABLE IF EXISTS active_hand_state;
     DROP TABLE IF EXISTS active_blind_state;
     DROP TABLE IF EXISTS run_stats;
     DROP TABLE IF EXISTS run_relics;

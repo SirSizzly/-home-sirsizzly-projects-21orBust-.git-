@@ -6,12 +6,16 @@ exports.up = function (knex) {
       .references("id")
       .inTable("runs")
       .onDelete("CASCADE");
+
     table.integer("position").notNullable(); // 0–103
-    table.integer("card_id").notNullable();
-    table.string("suit").notNullable();
-    table.string("rank").notNullable();
-    table.integer("value").notNullable();
-    table.string("image_key").notNullable();
+
+    // MUST be string now
+    table.string("card_id").notNullable();
+
+    table.string("suit").notNullable(); // "club"
+    table.string("rank").notNullable(); // "Q"
+    table.integer("value").notNullable(); // 10
+    table.string("image_key").notNullable(); // "q_club"
   });
 };
 

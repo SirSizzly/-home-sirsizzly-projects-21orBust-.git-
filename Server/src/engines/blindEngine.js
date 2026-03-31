@@ -1,121 +1,121 @@
-// blindEngine.js
-// Authoritative blind lifecycle for 21orBust.
-// Manages hands, accumulated score, early clear, and Final Hand logic.
+// Server/src/engines/blindEngine.js
+// Blind lifecycle + boss blind logic for 21orBust.
+// No DB, no UI — pure rules.
 
-const { createHand, checkAutoBlackjack } = require("./handEngine");
-const { calculateHandTotal } = require("./cardEngine");
-const { scoreHand } = require("./scoringEngine");
-const {
-  applyFragileOnBust,
-  applyFragileOnScore,
-  applyFragileReduction,
-} = require("./fragileEngine");
+//
+// Blind types (small, big, boss) and their defaults
+//
+const BLIND_CONFIG = {
+  small: {
+    baseTarget: 80,
+    handsAllowed: 5,
+  },
+  big: {
+    baseTarget: 140,
+    handsAllowed: 5,
+  },
+  boss: {
+    baseTarget: 200,
+    handsAllowed: 6,
+  },
+};
 
-function playBlind(context) {
-  // context:
-  // {
-  //   run,
-  //   deck,
-  //   drawCard,
-  //   targetScore,
-  //   maxHands,
-  //   boss,
-  //   dispatcher,
-  //   handlers
-  // }
+//
+// Boss blind definitions
+//
+const BOSS_BLINDS = {
+  the_crack_down: {
+    key: "the_crack_down",
+    type: "boss",
+    description: "No splits allowed.",
+  },
+  the_tightening: {
+    key: "the_tightening",
+    type: "boss",
+    description: "Max 2 hits per hand.",
+  },
+  the_jammer: {
+    key: "the_jammer",
+    type: "boss",
+    description: "Cannot hit at 17 or more.",
+  },
+  the_taxman: {
+    key: "the_taxman",
+    type: "boss",
+    description: "Reduces points by 20%.",
+  },
+  the_grinder: {
+    key: "the_grinder",
+    type: "boss",
+    description: "Reduces multiplier by 1.",
+  },
+  the_scramble: {
+    key: "boss_scramble",
+    type: "boss",
+    description: "Randomizes suits when scoring.",
+  },
+};
 
-  let accumulatedScore = 0;
-  let handsPlayed = [];
-  let firstBlackjackResolved = false;
+//
+// Create a new blind state
+//
+function createBlindState({ blindType, anteIndex, bossKey = null }) {
+  const cfg = BLIND_CONFIG[blindType] || BLIND_CONFIG.small;
 
-  for (let handIndex = 0; handIndex < context.maxHands; handIndex++) {
-    const hand = createHand();
-    hand.cards.push(context.drawCard());
-    hand.cards.push(context.drawCard());
-
-    const handContext = {
-      aceUpActive: false,
-      scrambleActive: context.boss === "boss_scramble",
-      prng: context.run.prng,
-    };
-
-    const total = checkAutoBlackjack(hand, handContext);
-    if (hand.blackjack && !firstBlackjackResolved) {
-      firstBlackjackResolved = true;
-    }
-
-    // Hand play loop is driven externally (player input)
-    // At this point, the hand is resolved
-
-    const handTotal = calculateHandTotal(hand.cards, handContext);
-
-    const scoringContext = {
-      run: context.run,
-      boss: context.boss,
-      handTotal,
-      firstHand: handIndex === 0,
-      firstBlackjack: firstBlackjackResolved,
-      jokers: context.run.jokers.map((j) => j.key),
-      relics: context.run.relics.map((r) => r.key),
-      enhancements: hand.cards
-        .map((c) => c.enhancement && c.enhancement.key)
-        .filter(Boolean),
-    };
-
-    let { basePoints, multiplier, preFragileScore } = scoreHand(
-      hand,
-      scoringContext,
-    );
-
-    if (hand.busted) {
-      applyFragileOnBust({
-        run: context.run,
-        boss: context.boss,
-        jokers: scoringContext.jokers,
-        relics: scoringContext.relics,
-        enhancements: scoringContext.enhancements,
-      });
-    } else {
-      applyFragileOnScore({
-        run: context.run,
-        boss: context.boss,
-      });
-    }
-
-    const finalScore = applyFragileReduction(
-      preFragileScore,
-      context.run.fragileStacks,
-    );
-
-    handsPlayed.push({
-      hand,
-      finalScore,
-      multiplier,
-    });
-
-    accumulatedScore += finalScore;
-
-    if (accumulatedScore >= context.targetScore) {
-      break;
-    }
-  }
-
-  // Boss / Joker: Final Hand — only highest scoring hand counts
-  if (
-    context.boss === "boss_final_hand" ||
-    context.run.jokers.some((j) => j.key === "final_hand")
-  ) {
-    const highest = Math.max(...handsPlayed.map((h) => h.finalScore));
-    accumulatedScore = highest * 3;
-  }
+  // Scale target by ante
+  const target = cfg.baseTarget + (anteIndex - 1) * 20;
 
   return {
-    cleared: accumulatedScore >= context.targetScore,
-    accumulatedScore,
-    handsPlayed,
+    blind_type: blindType,
+    target_score: target,
+    accumulated_score: 0,
+    hands_played: 0,
+    boss_key: bossKey,
   };
 }
 
+//
+// Apply score from a resolved hand to the blind
+//
+function applyHandScoreToBlind(blindState, handScore) {
+  const updated = { ...blindState };
+
+  updated.accumulated_score =
+    Number(updated.accumulated_score) + Number(handScore);
+  updated.hands_played = Number(updated.hands_played) + 1;
+
+  return updated;
+}
+
+//
+// Check if blind is cleared or failed
+//
+function evaluateBlindOutcome(blindState) {
+  const cfg = BLIND_CONFIG[blindState.blind_type] || BLIND_CONFIG.small;
+
+  const cleared = blindState.accumulated_score >= blindState.target_score;
+  const failed = !cleared && blindState.hands_played >= cfg.handsAllowed;
+
+  return {
+    cleared,
+    failed,
+    inProgress: !cleared && !failed,
+  };
+}
+
+//
+// Get boss metadata by key
+//
+function getBossByKey(key) {
+  if (!key) return null;
+  return BOSS_BLINDS[key] || null;
+}
+
 module.exports = {
-  playBlind,
+  BLIND_CONFIG,
+  BOSS_BLINDS,
+  createBlindState,
+  applyHandScoreToBlind,
+  evaluateBlindOutcome,
+  getBossByKey,
 };

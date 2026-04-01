@@ -1,15 +1,22 @@
-const BASE = "http://localhost:3000/api";
+// Client/src/api/shopApi.js
+import axios from "axios";
 
-export async function getShop(runId) {
-  const res = await fetch(`${BASE}/shop/${runId}`);
-  return res.json();
-}
+const API_BASE = "http://localhost:3000/api";
 
-export async function buyItem(runId, type, slot) {
-  const res = await fetch(`${BASE}/shop/${runId}/buy`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ type, slot }),
+export const getShop = async (runId) => {
+  const res = await axios.get(`${API_BASE}/runs/${runId}/shop`);
+  return res.data;
+};
+
+export const buyItem = async (runId, type, index = null) => {
+  const res = await axios.post(`${API_BASE}/runs/${runId}/shop/buy`, {
+    type,
+    index,
   });
-  return res.json();
-}
+  return res.data;
+};
+
+export const rerollShop = async (runId) => {
+  const res = await axios.post(`${API_BASE}/runs/${runId}/shop/reroll`);
+  return res.data;
+};

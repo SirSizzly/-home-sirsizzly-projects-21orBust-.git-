@@ -1,40 +1,34 @@
-const BASE = "http://localhost:3000/api";
+// Client/src/api/runApi.js
+import axios from "axios";
 
-export async function startRun() {
-  const res = await fetch(`${BASE}/run/start`, { method: "POST" });
-  return res.json();
-}
+const API_BASE = "http://localhost:3000/api/run";
 
-export async function getRun(id) {
-  const res = await fetch(`${BASE}/run/${id}`);
-  return res.json();
-}
+export const startRun = async () => {
+  const res = await axios.post(`${API_BASE}/start`);
+  return res.data;
+};
 
-export async function hit(id) {
-  const res = await fetch(`${BASE}/run/${id}/action/hit`, { method: "POST" });
-  return res.json();
-}
+export const getRun = async (runId) => {
+  const res = await axios.get(`${API_BASE}/${runId}`);
+  return res.data;
+};
 
-export async function stay(id) {
-  const res = await fetch(`${BASE}/run/${id}/action/stay`, { method: "POST" });
-  return res.json();
-}
+export const hit = async (runId) => {
+  const res = await axios.post(`${API_BASE}/${runId}/hit`);
+  return res.data;
+};
 
-export async function nextHand(id) {
-  const res = await fetch(`${BASE}/run/${id}/action/next-hand`, {
-    method: "POST",
-  });
-  return res.json();
-}
+export const stay = async (runId) => {
+  const res = await axios.post(`${API_BASE}/${runId}/stay`);
+  return res.data;
+};
 
-export async function nextBlind(id) {
-  const res = await fetch(`${BASE}/run/${id}/action/next-blind`, {
-    method: "POST",
-  });
-  return res.json();
-}
+export const splitHand = async (runId) => {
+  const res = await axios.post(`${API_BASE}/${runId}/split`);
+  return res.data;
+};
 
-export async function getDeck(id) {
-  const res = await fetch(`${BASE}/run/${id}/deck`);
-  return res.json();
-}
+export const doubleDown = async (runId) => {
+  const res = await axios.post(`${API_BASE}/${runId}/double-down`);
+  return res.data;
+};

@@ -1,24 +1,35 @@
-import { useState } from "react";
-import RunStartScreen from "./screens/RunStartScreen";
-import GameplayScreen from "./screens/GameplayScreen";
-import ShopScreen from "./screens/ShopScreen";
+// Client/src/App.jsx
+import { BrowserRouter, Routes, Route } from "react-router-dom";
+import "./App.css";
+
+import DemoStartScreen from "./demo/screens/DemoStartScreen.jsx";
+import DemoGameplayScreen from "./demo/screens/DemoGameplayScreen.jsx";
+import DemoShopScreen from "./demo/screens/DemoShopScreen.jsx";
 
 export default function App() {
-  const [runId, setRunId] = useState(null);
-  const [screen, setScreen] = useState("start");
+  return (
+    <BrowserRouter>
+      <div className="app-wrapper">
+        <header className="app-header">
+          <h1>21orBust — Demo Mode</h1>
+        </header>
 
-  if (screen === "start")
-    return (
-      <RunStartScreen
-        onStart={(id) => {
-          setRunId(id);
-          setScreen("game");
-        }}
-      />
-    );
+        <main className="app-content">
+          <Routes>
+            {/* DEMO ROUTES */}
+            <Route path="/demo/start" element={<DemoStartScreen />} />
+            <Route path="/demo/game" element={<DemoGameplayScreen />} />
+            <Route path="/demo/shop" element={<DemoShopScreen />} />
 
-  if (screen === "shop")
-    return <ShopScreen runId={runId} onClose={() => setScreen("game")} />;
+            {/* DEFAULT → redirect to demo start */}
+            <Route path="*" element={<DemoStartScreen />} />
+          </Routes>
+        </main>
 
-  return <GameplayScreen runId={runId} onShop={() => setScreen("shop")} />;
+        <footer className="app-footer">
+          Demo Build • Gothic Arcana Edition
+        </footer>
+      </div>
+    </BrowserRouter>
+  );
 }

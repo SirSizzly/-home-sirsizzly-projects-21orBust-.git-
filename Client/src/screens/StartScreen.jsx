@@ -1,7 +1,9 @@
-// CLIENT/src/screens/StartScreen.jsx
 import React from "react";
+import { useNavigate } from "react-router-dom";
 
-export default function StartScreen({ onStart }) {
+export default function StartScreen() {
+  const navigate = useNavigate();
+
   return (
     <div style={styles.container}>
       <div style={styles.titleWrapper}>
@@ -9,7 +11,7 @@ export default function StartScreen({ onStart }) {
         <p style={styles.subtitle}>A Game of Risk, Ruin, and Arcane Fortune</p>
       </div>
 
-      <button style={styles.startButton} onClick={onStart}>
+      <button style={styles.startButton} onClick={() => navigate("/game")}>
         Begin Your Run
       </button>
 

@@ -1,23 +1,22 @@
-const express = require("express");
-const cors = require("cors");
+// Server/src/app.js
+import express from "express";
+import cors from "cors";
+import path from "path";
+
+const __dirname = path.resolve();
 const app = express();
 
+app.use(cors());
 app.use(express.json());
 
-app.use(
-  cors({
-    origin: "http://127.0.0.1:5173",
-    credentials: true,
-  }),
-);
-
-// HEALTH CHECK
-app.get("/health", (req, res) => {
-  res.json({ ok: true });
-});
+// STATIC: card images
+app.use("/deck", express.static(path.join(__dirname, "public/deck/deck")));
 
 // ROUTES
-app.use("/api/run", require("./routes/runRoutes"));
-app.use("/api/shop", require("./routes/shopRoutes"));
+import runRouter from "./routes/runRoutes.js";
+app.use("/api/run", runRouter);
 
-module.exports = app;
+import shopRouter from "./routes/shopRoutes.js";
+app.use("/api", shopRouter);
+
+export default app;

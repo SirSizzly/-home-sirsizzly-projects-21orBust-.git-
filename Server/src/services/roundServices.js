@@ -19,7 +19,8 @@
 // “If all hands are used and the blind target is not met: The run ends immediately.”
 // ------------------------------------------------------------
 
-const db = require("../db/knex");
+const knex = require("knex")(require("../../knexfile").development);
+
 const handEngine = require("../engines/handEngine");
 const cardEngine = require("../engines/cardEngine");
 

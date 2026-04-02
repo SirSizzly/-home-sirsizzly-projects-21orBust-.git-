@@ -2,7 +2,7 @@
 // Orchestrates run state using the new run-state schema.
 // Engines own rules; this service owns DB orchestration and snapshots.
 
-const knex = require("../db/knex");
+const knex = require("knex")(require("../../knexfile").development);
 
 const {
   createHand,
@@ -120,51 +120,53 @@ async function ensureAtLeastOneHandExists(trx, runId, bossKey) {
   return loadActiveHands(trx, runId);
 }
 
+async function buildSnapshot(trx, runId) {
+  const run = await trx("runs").where({ id: runId }).first();
+  if (!run) return null;
+
+  const blind = await ensureActiveBlindExists(trx, runId);
+  const hands = await ensureAtLeastOneHandExists(trx, runId, blind.boss_key);
+  const inventory = await loadInventory(trx, runId);
+
+  return {
+    run: {
+      id: run.id,
+      seed: run.seed,
+      gold: run.gold,
+      fragileStacks: run.fragile_stacks,
+      permanentMultiplier: run.permanent_multiplier,
+      anteIndex: run.ante_index,
+      next_position: run.next_position,
+      is_complete: !!run.is_complete,
+      created_at: run.created_at,
+      updated_at: run.updated_at,
+      completed_at: run.completed_at || null,
+    },
+    blind: blind && {
+      blind_type: blind.blind_type,
+      target_score: blind.target_score,
+      accumulated_score: blind.accumulated_score,
+      hands_played: blind.hands_played,
+      boss_key: blind.boss_key,
+    },
+    hands: hands.map((h) => ({
+      hand_index: h.hand_index,
+      cards: Array.isArray(h.cards) ? h.cards : JSON.parse(h.cards),
+      resolved: !!h.resolved,
+      stayed: !!h.stayed,
+      busted: !!h.busted,
+      void_border_used: !!h.void_border_used,
+    })),
+    inventory,
+  };
+}
+
 // -----------------------------
 // Snapshot
 // -----------------------------
 async function getRunState(runId) {
   return knex.transaction(async (trx) => {
-    const run = await trx("runs").where({ id: runId }).first();
-    if (!run) return null;
-
-    // 🔑 ADDITION: ensure gameplay state exists
-    const blind = await ensureActiveBlindExists(trx, runId);
-    const hands = await ensureAtLeastOneHandExists(trx, runId, blind.boss_key);
-
-    const inventory = await loadInventory(trx, runId);
-
-    return {
-      run: {
-        id: run.id,
-        seed: run.seed,
-        gold: run.gold,
-        fragileStacks: run.fragile_stacks,
-        permanentMultiplier: run.permanent_multiplier,
-        anteIndex: run.ante_index,
-        next_position: run.next_position,
-        is_complete: !!run.is_complete,
-        created_at: run.created_at,
-        updated_at: run.updated_at,
-        completed_at: run.completed_at || null,
-      },
-      blind: blind && {
-        blind_type: blind.blind_type,
-        target_score: blind.target_score,
-        accumulated_score: blind.accumulated_score,
-        hands_played: blind.hands_played,
-        boss_key: blind.boss_key,
-      },
-      hands: hands.map((h) => ({
-        hand_index: h.hand_index,
-        cards: Array.isArray(h.cards) ? h.cards : JSON.parse(h.cards),
-        resolved: !!h.resolved,
-        stayed: !!h.stayed,
-        busted: !!h.busted,
-        void_border_used: !!h.void_border_used,
-      })),
-      inventory,
-    };
+    return buildSnapshot(trx, runId);
   });
 }
 
@@ -248,7 +250,7 @@ async function applyHandAction(runId, handIndex, action) {
         updated_at: trx.fn.now(),
       });
 
-      return getRunState(runId);
+      return buildSnapshot(trx, runId);
     }
 
     await trx("active_hand_state")
@@ -325,7 +327,7 @@ async function applyHandAction(runId, handIndex, action) {
       });
     }
 
-    return getRunState(runId);
+    return buildSnapshot(trx, runId);
   });
 }
 

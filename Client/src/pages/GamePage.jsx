@@ -1,44 +1,70 @@
-// Client/src/pages/GamePage.jsx
-
 import { useEffect, useState } from "react";
-import { createRun, fetchRunState, applyHandAction } from "../api/runApi";
 import Hand from "../components/Hand";
+import {
+  doubleDown,
+  hit,
+  splitHand,
+  startRun,
+  stay,
+} from "../api/runApi.js";
+
+function toRunState(snapshot, previousRun = null) {
+  return {
+    run: {
+      id: snapshot.runId,
+      gold: snapshot.gold,
+      anteIndex: previousRun?.anteIndex ?? 1,
+      fragileStacks: previousRun?.fragileStacks ?? 0,
+      permanentMultiplier: previousRun?.permanentMultiplier ?? 0,
+    },
+    blind: snapshot.blind,
+    hands: snapshot.hands ?? [],
+  };
+}
 
 export default function GamePage() {
   const [runId, setRunId] = useState(null);
   const [runState, setRunState] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  async function startRun() {
-    setLoading(true);
-    const run = await createRun();
-    setRunId(run.id);
-    const state = await fetchRunState(run.id);
-    setRunState(state);
-    setLoading(false);
-  }
-
-  async function refreshRunState() {
-    if (!runId) return;
-    const state = await fetchRunState(runId);
-    setRunState(state);
-  }
-
   useEffect(() => {
-    startRun();
+    async function init() {
+      try {
+        setLoading(true);
+        const run = await startRun();
+        setRunId(run.runId);
+        setRunState(toRunState(run));
+      } catch (err) {
+        console.error("Failed to start run:", err);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    init();
   }, []);
 
   async function handleHandAction(handIndex, action) {
+    if (!runId) return;
+
     try {
-      await applyHandAction(runId, handIndex, action);
-      await refreshRunState();
+      let updated;
+
+      if (action === "hit") updated = await hit(runId);
+      if (action === "stay") updated = await stay(runId);
+      if (action === "double") updated = await doubleDown(runId);
+      if (action === "split") updated = await splitHand(runId);
+
+      if (!updated) return;
+
+      setRunState((prev) => toRunState(updated, prev?.run));
     } catch (err) {
       console.error("Action failed:", err);
     }
   }
 
   if (loading || !runState) {
-    return <div className="p-4 text-white">Loading run…</div>;
+    return <div className="p-4 text-white">Loading run...</div>;
   }
 
   const { run, hands } = runState;
@@ -61,8 +87,7 @@ export default function GamePage() {
             Fragile: <span className="font-semibold">{run.fragileStacks}</span>
           </div>
           <div>
-            Mult:{" "}
-            <span className="font-semibold">{run.permanentMultiplier}x</span>
+            Mult: <span className="font-semibold">{run.permanentMultiplier}x</span>
           </div>
         </div>
       </header>

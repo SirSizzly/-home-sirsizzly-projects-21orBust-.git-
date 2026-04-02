@@ -2,7 +2,8 @@
 // Run lifecycle only: create, fetch, complete.
 // No hand/blind/shop resolution lives here.
 
-const knex = require("../db/knex");
+const knex = require("knex")(require("../../knexfile").development);
+
 const { generateSeed, generateDeck } = require("../utils/deckGenerator");
 
 /**

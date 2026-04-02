@@ -2,7 +2,8 @@
 // Handles blind progression, ante advancement, and boss rotation.
 // Pure orchestration: DB + blindEngine + runstateService.
 
-const knex = require("../db/knex");
+const knex = require("knex")(require("../../knexfile").development);
+
 const {
   createBlindState,
   applyHandScoreToBlind,

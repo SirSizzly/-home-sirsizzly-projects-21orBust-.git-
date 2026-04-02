@@ -1,10 +1,9 @@
 // Client/src/App.jsx
-import { BrowserRouter, Routes, Route } from "react-router-dom";
-import "./App.css";
-
-import DemoStartScreen from "./demo/screens/DemoStartScreen.jsx";
-import DemoGameplayScreen from "./demo/screens/DemoGameplayScreen.jsx";
-import DemoShopScreen from "./demo/screens/DemoShopScreen.jsx";
+import {BrowserRouter, Route, Routes} from 'react-router-dom';
+import './App.css';
+import GameplayScreen from './screens/GameplayScreen.jsx';
+import StartScreen from './screens/StartScreen.jsx';
+import ShopScreen from './screens/ShopScreen.jsx';
 
 export default function App() {
   return (
@@ -17,12 +16,12 @@ export default function App() {
         <main className="app-content">
           <Routes>
             {/* DEMO ROUTES */}
-            <Route path="/demo/start" element={<DemoStartScreen />} />
-            <Route path="/demo/game" element={<DemoGameplayScreen />} />
-            <Route path="/demo/shop" element={<DemoShopScreen />} />
+            <Route path="/start" element={<StartScreen />} />
+            <Route path="/game" element={<GameplayScreen />} />
+            <Route path="/shop" element={<ShopScreen />} />
 
             {/* DEFAULT → redirect to demo start */}
-            <Route path="*" element={<DemoStartScreen />} />
+            <Route path="*" element={<StartScreen />} />
           </Routes>
         </main>
 

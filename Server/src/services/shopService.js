@@ -1,5 +1,6 @@
 // Server/src/services/shopService.js
-const knex = require("../db/knex");
+const knex = require("knex")(require("../../knexfile").development);
+
 const { setSeed } = require("../engines/prngEngine");
 const { generateShopOffers, rerollCost } = require("../engines/shopEngine");
 

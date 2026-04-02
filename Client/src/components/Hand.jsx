@@ -7,7 +7,10 @@ export default function Hand({ hand, onAction }) {
     <div className="flex items-center justify-between bg-slate-900/60 rounded-md p-3">
       <div className="flex gap-2">
         {hand.cards.map((card, idx) => (
-          <CardView key={idx} card={card} />
+          <CardView
+            key={`${hand.hand_index}-${card.id}-${card.image_key}-${idx}`}
+            card={card}
+          />
         ))}
       </div>
 

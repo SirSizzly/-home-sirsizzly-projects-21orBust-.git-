@@ -1,12 +1,12 @@
 // Client/src/components/cards/CardFactory.jsx
-import React from "react";
+import React from 'react';
 
 export default function CardFactory({ card }) {
   if (!card || !card.image_key) return null;
 
   // Backend sends: q_club, ten_club, ace_spade, etc.
   // Server serves: http://localhost:3000/deck/<image_key>.png
-  const src = `http://localhost:3000/deck/${card.image_key}.png`;
+    const src = `http://localhost:5173/images/cards/${card.image_key}.png`;
 
   return (
     <img

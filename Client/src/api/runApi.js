@@ -1,11 +1,13 @@
 // Client/src/api/runApi.js
-import axios from "axios";
+import axios from 'axios';
 
 const API_BASE = "http://localhost:3000/api/run";
 
 export const startRun = async () => {
   const res = await axios.post(`${API_BASE}/start`);
+  // const res = await fetch(`${API_BASE}/start`)
   return res.data;
+
 };
 
 export const getRun = async (runId) => {

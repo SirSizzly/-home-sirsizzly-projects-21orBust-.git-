@@ -15,7 +15,10 @@ export default function HandArea({ hands, onAction }) {
           >
             <div className="flex gap-2">
               {hand.cards.map((card, idx) => (
-                <CardView key={idx} card={card} />
+                <CardView
+                  key={`${hand.hand_index}-${card.id}-${card.image_key}-${idx}`}
+                  card={card}
+                />
               ))}
             </div>
 

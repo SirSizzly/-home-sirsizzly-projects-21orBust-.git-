@@ -3,6 +3,8 @@ exports.up = async function (knex) {
     CREATE TABLE IF NOT EXISTS active_shop_state (
       run_id INTEGER PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE,
       jokers JSONB NOT NULL DEFAULT '[]'::jsonb,
+      offers JSONB NOT NULL DEFAULT '[]'::jsonb,
+      rerolls_used INTEGER NOT NULL DEFAULT 0,
       relics JSONB NOT NULL DEFAULT '[]'::jsonb,
       enhancement_packs INTEGER NOT NULL DEFAULT 0,
       reroll_cost INTEGER NOT NULL DEFAULT 1,
